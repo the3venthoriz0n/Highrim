@@ -275,9 +275,7 @@ def main(argv):
     text = render(*build(args[0]))
     if check:
         with open(OUTPUT, "r", encoding="utf-8", newline="") as handle:
-            current = handle.read().replace("
-", "
-")
+            current = handle.read().replace("\r\n", "\n")
         if current != text:
             print("src/GameData.h is out of date; rerun tools/extract_game_data.py")
             return 1

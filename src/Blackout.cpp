@@ -7,6 +7,7 @@
 #include "Doses.h"
 #include "Forms.h"
 #include "Prison.h"
+#include "Withdrawal.h"
 
 #include <cmath>
 #include <random>
@@ -416,6 +417,7 @@ namespace Highrim::Blackout
             Tick();
             TickHangover();
             Doses::Tick();
+            Withdrawal::Tick();
         }
 
         void PollerLoop()

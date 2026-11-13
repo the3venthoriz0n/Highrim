@@ -55,6 +55,23 @@ namespace Highrim::Core
     std::optional<DrugType> TakeDueComedown(ComedownTimers& t, double nowSeconds);  // returns one due drug and clears it
     void                    CancelComedowns(ComedownTimers& t);
 
+    // Withdrawal application. appliedTier is what the player currently carries (-1 = unknown, e.g. after a
+    // load: always re-apply). When change is set, remove every Highrim withdrawal ability, then add the one for
+    // addTier (0 = add none). wantedTier is clamped to 0..3.
+    struct WithdrawalPlan
+    {
+        bool change{ false };
+        int  addTier{ 0 };
+    };
+    WithdrawalPlan PlanWithdrawal(int appliedTier, int wantedTier);
+
+    // Blur pulse: while tier >= 2 or the hangover is active, due every 60-180 real seconds (rng01 clamped to 0..1).
+    // Returns true when the pulse should be cast now (and has already been rescheduled in nextDue). Not eligible
+    // clears nextDue; eligible with no schedule schedules it without casting. Non-finite now is ignored.
+    inline constexpr double kBlurMinSeconds = 60.0;
+    inline constexpr double kBlurMaxSeconds = 180.0;
+    bool TickBlurPulse(std::optional<double>& nextDue, double nowSeconds, int tier, bool hangover, double rng01);
+
     struct Point { float x, y; };
 
     std::optional<std::size_t> NearestIndex(Point origin, std::span<const Point> points);

@@ -5,6 +5,7 @@
 #include "Blackout.h"
 #include "Doses.h"
 #include "Forms.h"
+#include "Withdrawal.h"
 
 namespace Highrim::State
 {
@@ -129,6 +130,7 @@ namespace Highrim::State
 
     void OnGameLoaded()
     {
+        Withdrawal::OnGameLoaded();
         Doses::CancelComedowns();
         const double expiry = Blackout::GetHangoverExpiryHours();
         if (expiry <= 0.0) {

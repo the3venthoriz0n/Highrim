@@ -238,6 +238,55 @@ namespace
             CHECK(!TakeDueComedown(t, 1e9).has_value());
         }
 
+        // Withdrawal plan: unknown applied tier (-1) always changes; equal does nothing; tier 0 only removes.
+        {
+            auto p = PlanWithdrawal(0, 0);
+            CHECK(!p.change);
+            p = PlanWithdrawal(2, 2);
+            CHECK(!p.change);
+            p = PlanWithdrawal(0, 1);
+            CHECK(p.change && p.addTier == 1);
+            p = PlanWithdrawal(3, 1);
+            CHECK(p.change && p.addTier == 1);
+            p = PlanWithdrawal(2, 0);
+            CHECK(p.change && p.addTier == 0);
+            p = PlanWithdrawal(-1, 0);
+            CHECK(p.change && p.addTier == 0);
+            p = PlanWithdrawal(-1, 3);
+            CHECK(p.change && p.addTier == 3);
+            p = PlanWithdrawal(1, 99);  // out of range is clamped to 3
+            CHECK(p.change && p.addTier == 3);
+            p = PlanWithdrawal(1, -5);  // and negative to 0
+            CHECK(p.change && p.addTier == 0);
+        }
+
+        // Blur pulse scheduling: 60-180 real seconds, only at tier >= 2 or with a hangover.
+        {
+            std::optional<double> due;
+            CHECK(!TickBlurPulse(due, 100.0, 1, false, 0.5));       // not eligible
+            CHECK(!due.has_value());
+            CHECK(!TickBlurPulse(due, 100.0, 2, false, 0.0));       // eligible: schedules, no cast
+            CHECK(due && *due == 160.0);
+            CHECK(!TickBlurPulse(due, 159.9, 2, false, 0.5));
+            CHECK(TickBlurPulse(due, 160.0, 2, false, 1.0));        // cast, reschedule 180 s out
+            CHECK(due && *due == 340.0);
+            CHECK(!TickBlurPulse(due, 200.0, 3, false, 0.5));
+            CHECK(!TickBlurPulse(due, 200.0, 0, false, 0.5));       // dropped out: cleared
+            CHECK(!due.has_value());
+            CHECK(!TickBlurPulse(due, 300.0, 0, true, 0.5));        // hangover alone is eligible
+            CHECK(due && *due == 300.0 + 120.0);
+            CHECK(TickBlurPulse(due, 1000.0, 0, true, 0.25));       // long delay still casts once
+            CHECK(due && *due == 1000.0 + 90.0);
+            CHECK(!TickBlurPulse(due, 1001.0, 0, true, 0.5));
+            CHECK(!TickBlurPulse(due, std::numeric_limits<double>::quiet_NaN(), 2, false, 0.5));  // bad clock ignored
+            std::optional<double> d2;
+            CHECK(!TickBlurPulse(d2, 0.0, 2, false, -3.0));         // rng clamped
+            CHECK(d2 && *d2 == 60.0);
+            d2.reset();
+            CHECK(!TickBlurPulse(d2, 0.0, 2, false, 9.0));
+            CHECK(d2 && *d2 == 180.0);
+        }
+
         CHECK(NoteText("Dawnstar Sanctuary") == "Your things are in Dawnstar Sanctuary.");
         CHECK(NoteText("") == "Your things are in .");
         return 0;

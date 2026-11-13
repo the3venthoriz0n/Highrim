@@ -220,4 +220,29 @@ namespace Highrim::Core
         out += '.';
         return out;
     }
+
+    WithdrawalPlan PlanWithdrawal(int appliedTier, int wantedTier)
+    {
+        const int wanted = std::clamp(wantedTier, 0, 3);
+        if (appliedTier == wanted) return {};
+        return { true, wanted };
+    }
+
+    bool TickBlurPulse(std::optional<double>& nextDue, double nowSeconds, int tier, bool hangover, double rng01)
+    {
+        if (!std::isfinite(nowSeconds)) return false;
+        if (tier < 2 && !hangover) {
+            nextDue.reset();
+            return false;
+        }
+        const double r        = std::isfinite(rng01) ? std::clamp(rng01, 0.0, 1.0) : 0.5;
+        const double interval = kBlurMinSeconds + r * (kBlurMaxSeconds - kBlurMinSeconds);
+        if (!nextDue) {
+            nextDue = nowSeconds + interval;
+            return false;
+        }
+        if (nowSeconds < *nextDue) return false;
+        nextDue = nowSeconds + interval;
+        return true;
+    }
 }

@@ -30,6 +30,8 @@ set(PROJECT_SOURCES
     src/Doses.cpp
     src/State.h
     src/State.cpp
+    src/Withdrawal.h
+    src/Withdrawal.cpp
 )
 
 add_commonlibsse_plugin(${PROJECT_NAME}

@@ -1,6 +1,7 @@
 name: Release
 
-# Pushing a tag like v0.1.0 (the tagged commit must be on main, or the run stops) builds the plugin on Windows, runs the tests, packages
+# Pushing a tag like v0.1.0 (the tagged commit must be on main, or the run stops) is all a release needs: the tag IS the version.
+# The run stamps it into CMakeLists.txt, vcpkg.json, src/main.cpp and tools/make_archive.ps1, builds the plugin on Windows, runs the tests, packages
 # dist/Highrim-<version>.zip, creates a GitHub release with it, and (when configured)
 # uploads it to Nexus Mods as a new version of an existing file.
 #
@@ -44,13 +45,34 @@ jobs:
         id: ver
         shell: pwsh
         run: |
-          $m = Select-String -Path CMakeLists.txt -Pattern 'project\(Highrim VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
-          if (-not $m) { throw "Could not read the version from CMakeLists.txt" }
-          $v = $m.Matches[0].Groups[1].Value
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$v") {
-            throw "Tag $env:GITHUB_REF_NAME does not match CMakeLists.txt version $v"
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^v([0-9]+\.[0-9]+\.[0-9]+)$') {
+              throw "Tag $env:GITHUB_REF_NAME must look like v1.2.3"
+            }
+            $v = $Matches[1]
+          } else {
+            $m = Select-String -Path CMakeLists.txt -Pattern 'project\(Highrim VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
+            if (-not $m) { throw "Could not read the version from CMakeLists.txt" }
+            $v = $m.Matches[0].Groups[1].Value
           }
           "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Stamp the version into the sources
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          function Stamp([string]$path, [string]$pattern, [string]$replacement) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $PWD $path))
+            $rx = [regex]$pattern
+            if ($rx.Matches($text).Count -ne 1) { throw "Expected exactly one version match in $path" }
+            [System.IO.File]::WriteAllText((Join-Path $PWD $path), $rx.Replace($text, $replacement))
+            Write-Host "Stamped $path -> $v"
+          }
+          Stamp 'CMakeLists.txt' '(project\(Highrim VERSION )[0-9]+\.[0-9]+\.[0-9]+' ('${1}' + $v)
+          Stamp 'vcpkg.json' '("version-string":\s*")[0-9]+\.[0-9]+\.[0-9]+(")' ('${1}' + $v + '${2}')
+          Stamp 'src/main.cpp' '("Highrim )[0-9]+\.[0-9]+\.[0-9]+( loading")' ('${1}' + $v + '${2}')
+          Stamp 'tools/make_archive.ps1' '(\[string\]\$Version = ")[0-9]+\.[0-9]+\.[0-9]+(")' ('${1}' + $v + '${2}')
 
       - name: Configure
         shell: pwsh
@@ -94,3 +116,16 @@ jobs:
           update_mod_version: "true"
           mod_id: ${{ vars.NEXUS_MOD_ID }}
           changelog: See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+
+      - name: Commit the version bump back to main
+        if: github.ref_type == 'tag'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt vcpkg.json src/main.cpp tools/make_archive.ps1
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host "Sources already at this version"; exit 0 }
+          git commit -m "Bump version to ${{ steps.ver.outputs.version }} (release $env:GITHUB_REF_NAME)"
+          git push origin HEAD:main

@@ -43,7 +43,7 @@ The comedown is cast about 120 real seconds after a dose. Drinking another dose 
 Two doses of any drugs within `iDoseWindowMinutes` game minutes (default 30) are an overdose. About 1.5 real seconds after the second dose:
 
 1. Fade to black (1.5 s) and disable player controls.
-2. Pick the nearest hold prison (distance from you to each prison's exterior anchor).
+2. Pick the nearest hold prison. Distances are measured in your worldspace (normally Tamriel). Five holds (Whiterun, Eastmarch, Rift, Haafingar, Reach) keep their jail marker in a separate city worldspace, so for them the capital's map marker in Tamriel stands in for the prison. If you are inside such a city, your own position is likewise replaced by that city's capital marker in Tamriel. Each choice is logged with what it was based on.
 3. Use that prison's confiscation chest.
 4. Unequip everything, move every non-quest item (gold included) to the chest and verify the counts. A mismatch rolls back and aborts with your items untouched, plus a message box. Quest items stay on you.
 5. Pick a wake spot: a discovered map marker 8000 to 30000 units from that prison. This is chosen before anything moves; if none exists the blackout aborts with your items untouched.
@@ -51,7 +51,7 @@ Two doses of any drugs within `iDoseWindowMinutes` game minutes (default 30) are
 
 Then it holds black for 2 s and fades back in. (The log numbers the steps as above but runs step 5 before steps 3 and 4.) It does nothing if a blackout is already running, you are in combat or dialogue, controls are not available, or you are dead.
 
-Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail marker but no confiscation container), so it is never chosen as the nearest prison. The other eight holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale) are candidates.
+Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail marker but no confiscation container), so it is never chosen as the nearest prison. The other eight holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale) are candidates, as long as their anchor can be resolved as above (a hold with no capital map marker in your worldspace is skipped and logged).
 
 ## MCM options (section General)
 

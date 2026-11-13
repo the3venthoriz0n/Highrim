@@ -170,17 +170,30 @@ namespace Highrim::Blackout
                 }
 
                 auto* tamriel = RE::TESForm::LookupByID<RE::TESWorldSpace>(kTamriel);
-                RE::TESWorldSpace* world = here->world ? here->world : tamriel;
-                auto markers = Prison::WorldMarkers(world);
-                spdlog::info("Blackout: step 2: worldspace {:08X} has {} map markers", world ? world->GetFormID() : 0u, markers.size());
+                RE::TESWorldSpace* playerWorld = here->world ? here->world : tamriel;
+
+                // Parent chains of every worldspace involved, for the "same space / child of" decisions.
+                Core::WorldParents parents;
+                auto addChain = [&](RE::TESWorldSpace* w) {
+                    for (int i = 0; w && i < 16; ++i) {
+                        auto* p = w->parentWorld;
+                        parents[w->GetFormID()] = p ? p->GetFormID() : 0u;
+                        w = p;
+                    }
+                };
+                addChain(playerWorld);
 
                 struct Candidate
                 {
                     Prison::Resolved r;
                     Prison::Anchor   anchor;
                 };
-                std::vector<Candidate> candidates;
-                std::vector<Core::Point> points;
+                struct Pending
+                {
+                    Prison::Resolved              r;
+                    std::optional<Prison::Anchor> jailAnchor;
+                };
+                std::vector<Pending> pending;
                 for (const auto& def : Prison::Holds()) {
                     auto r = Prison::Resolve(def);
                     if (!r.chest) {
@@ -188,25 +201,87 @@ namespace Highrim::Blackout
                         continue;
                     }
                     std::optional<Prison::Anchor> a = r.jail ? Prison::ExteriorAnchor(r.jail) : std::nullopt;
-                    if (!a) {
-                        for (const auto& m : markers) {
-                            if (_stricmp(m.name.c_str(), def.capital) == 0) {
-                                a = Prison::Anchor{ m.x, m.y, world, std::string("map marker of ") + def.capital + " (fallback)" };
-                                break;
+                    if (a) {
+                        addChain(a->world);
+                    }
+                    pending.push_back({ std::move(r), std::move(a) });
+                }
+
+                // The space to compare in: the root of the player's worldspace (normally Tamriel).
+                const std::uint32_t playerWorldId = playerWorld ? playerWorld->GetFormID() : 0u;
+                const std::uint32_t spaceId       = Core::WorldRoot(playerWorldId, parents);
+                auto* space = spaceId == playerWorldId ? playerWorld : RE::TESForm::LookupByID<RE::TESWorldSpace>(spaceId);
+                if (spaceId != playerWorldId) {
+                    // The player is inside a city worldspace: stand in for them with the capital's marker in the parent space.
+                    std::optional<Prison::Anchor> mapped;
+                    for (const auto& p : pending) {
+                        if (p.jailAnchor && p.jailAnchor->world == playerWorld) {
+                            for (const auto& m : Prison::WorldMarkers(space)) {
+                                if (_stricmp(m.name.c_str(), p.r.def->capital) == 0) {
+                                    mapped = Prison::Anchor{ m.x, m.y, space,
+                                        std::string("map marker of ") + p.r.def->capital + " in the parent worldspace" };
+                                    break;
+                                }
                             }
+                            break;
                         }
                     }
-                    if (!a) {
-                        spdlog::info("Blackout: step 2: {} skipped, no exterior anchor for its prison", def.name);
-                        continue;
+                    if (mapped) {
+                        spdlog::info("Blackout: step 2: player is in worldspace {:08X}, a child of {:08X}; using {} at ({:.0f},{:.0f})",
+                            playerWorldId, spaceId, mapped->how, mapped->x, mapped->y);
+                        here = std::move(mapped);
+                    } else {
+                        spdlog::warn("Blackout: step 2: player is in child worldspace {:08X} but no capital marker was found in {:08X}; "
+                                     "comparing inside the child worldspace only", playerWorldId, spaceId);
+                        space = playerWorld;
                     }
-                    if (a->world && world && a->world != world) {
-                        spdlog::info("Blackout: step 2: {} skipped, prison anchor is in worldspace {:08X}", def.name, a->world->GetFormID());
-                        continue;
+                }
+                RE::TESWorldSpace* world   = space ? space : tamriel;
+                const std::uint32_t worldId = world ? world->GetFormID() : 0u;
+                auto                markers = Prison::WorldMarkers(world);
+                spdlog::info("Blackout: step 2: comparing in worldspace {:08X}, which has {} map markers", worldId, markers.size());
+
+                std::vector<Candidate>   candidates;
+                std::vector<Core::Point> points;
+                for (auto& p : pending) {
+                    const auto& def           = *p.r.def;
+                    auto        capitalMarker = [&](const std::string& why) -> std::optional<Prison::Anchor> {
+                        for (const auto& m : markers) {
+                            if (_stricmp(m.name.c_str(), def.capital) == 0) {
+                                return Prison::Anchor{ m.x, m.y, world, std::string("map marker of ") + def.capital + " (" + why + ")" };
+                            }
+                        }
+                        return std::nullopt;
+                    };
+                    std::optional<Prison::Anchor> a;
+                    if (!p.jailAnchor) {
+                        a = capitalMarker("fallback, no jail anchor");
+                        if (!a) {
+                            spdlog::info("Blackout: step 2: {} skipped, no exterior anchor for its prison", def.name);
+                            continue;
+                        }
+                    } else {
+                        const auto jailWorldId = p.jailAnchor->world ? p.jailAnchor->world->GetFormID() : 0u;
+                        switch (Core::ClassifyAnchorSpace(jailWorldId, worldId, parents)) {
+                        case Core::AnchorSpace::kSame:
+                            a = p.jailAnchor;
+                            break;
+                        case Core::AnchorSpace::kChild:
+                            a = capitalMarker(std::format("jail is in city worldspace {:08X}, capital marker used", jailWorldId));
+                            if (!a) {
+                                spdlog::info("Blackout: step 2: {} skipped, jail is in city worldspace {:08X} and the capital has no marker in {:08X}",
+                                    def.name, jailWorldId, worldId);
+                                continue;
+                            }
+                            break;
+                        default:
+                            spdlog::info("Blackout: step 2: {} skipped, prison anchor is in unrelated worldspace {:08X}", def.name, jailWorldId);
+                            continue;
+                        }
                     }
                     spdlog::info("Blackout: step 2: candidate {} anchor ({:.0f},{:.0f}) via {}", def.name, a->x, a->y, a->how);
                     points.push_back({ a->x, a->y });
-                    candidates.push_back({ std::move(r), std::move(*a) });
+                    candidates.push_back({ std::move(p.r), std::move(*a) });
                 }
                 const auto nearest = Core::NearestIndex({ here->x, here->y }, points);
                 if (!nearest) {

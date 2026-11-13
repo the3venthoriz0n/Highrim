@@ -186,6 +186,30 @@ namespace
             CHECK(!PickWakeSpot(c, { 0, 0 }, 6.f, 9.f, 0.5f).has_value());
         }
 
+        // Worldspace relations: 3C Tamriel, 100 Whiterun city (child of 3C), 200 Solitude city, 300 a separate root.
+        {
+            const WorldParents wp{ { 0x100, 0x3C }, { 0x200, 0x3C }, { 0x3C, 0 }, { 0x400, 0x100 } };
+            CHECK(WorldRoot(0x3C, wp) == 0x3C);
+            CHECK(WorldRoot(0x100, wp) == 0x3C);
+            CHECK(WorldRoot(0x400, wp) == 0x3C);
+            CHECK(WorldRoot(0x300, wp) == 0x300);
+            CHECK(IsDescendantWorld(0x100, 0x3C, wp));
+            CHECK(IsDescendantWorld(0x400, 0x3C, wp));
+            CHECK(!IsDescendantWorld(0x3C, 0x100, wp));
+            CHECK(!IsDescendantWorld(0x100, 0x100, wp));
+            CHECK(!IsDescendantWorld(0x100, 0x200, wp));
+            CHECK(!IsDescendantWorld(0, 0x3C, wp));
+            CHECK(ClassifyAnchorSpace(0x3C, 0x3C, wp) == AnchorSpace::kSame);
+            CHECK(ClassifyAnchorSpace(0, 0x3C, wp) == AnchorSpace::kSame);
+            CHECK(ClassifyAnchorSpace(0x100, 0x3C, wp) == AnchorSpace::kChild);
+            CHECK(ClassifyAnchorSpace(0x100, 0x100, wp) == AnchorSpace::kSame);
+            CHECK(ClassifyAnchorSpace(0x100, 0x200, wp) == AnchorSpace::kUnrelated);
+            CHECK(ClassifyAnchorSpace(0x3C, 0x100, wp) == AnchorSpace::kUnrelated);
+            const WorldParents cyc{ { 1, 2 }, { 2, 1 } };
+            (void)WorldRoot(1, cyc);
+            CHECK(!IsDescendantWorld(1, 9, cyc));
+        }
+
         // Drug id mapping.
         CHECK(DrugFromLocalId(Highrim::Forms::HighrimRimerush) == std::optional<DrugType>(DrugType::kStimulant));
         CHECK(DrugFromLocalId(Highrim::Forms::HighrimVelvetHaze) == std::optional<DrugType>(DrugType::kDepressant));

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -77,6 +78,16 @@ namespace Highrim::Core
     std::optional<std::size_t> NearestIndex(Point origin, std::span<const Point> points);
     std::optional<std::size_t> PickWakeSpot(std::span<const Point> candidates, Point origin,
         float minDist, float maxDist, float rng01);
+
+    // Worldspace relations, as a plain id -> parent id map (0 or absent = no parent). Cycles are cut.
+    using WorldParents = std::map<std::uint32_t, std::uint32_t>;
+    std::uint32_t WorldRoot(std::uint32_t world, const WorldParents& parents);
+    bool          IsDescendantWorld(std::uint32_t child, std::uint32_t ancestor, const WorldParents& parents);  // strict
+    // How a prison anchor in jailWorld relates to the coordinate space (worldspace) used for comparison:
+    // kSame: use the anchor as is (jailWorld 0 = unknown counts as same); kChild: jailWorld is a child worldspace
+    // (a city), so use the capital's exterior position in the space instead; kUnrelated: skip the hold.
+    enum class AnchorSpace { kSame, kChild, kUnrelated };
+    AnchorSpace ClassifyAnchorSpace(std::uint32_t jailWorld, std::uint32_t space, const WorldParents& parents);
 
     std::string NoteText(std::string_view prisonName);
 }

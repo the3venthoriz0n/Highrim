@@ -181,6 +181,37 @@ namespace Highrim::Core
         for (auto& d : t.dueSeconds) d.reset();
     }
 
+    std::uint32_t WorldRoot(std::uint32_t world, const WorldParents& parents)
+    {
+        std::uint32_t cur = world;
+        for (int i = 0; i < 64; ++i) {  // bounded: a cyclic map cannot hang us
+            auto it = parents.find(cur);
+            if (it == parents.end() || it->second == 0 || it->second == cur) return cur;
+            cur = it->second;
+        }
+        return cur;
+    }
+
+    bool IsDescendantWorld(std::uint32_t child, std::uint32_t ancestor, const WorldParents& parents)
+    {
+        if (child == 0 || ancestor == 0 || child == ancestor) return false;
+        std::uint32_t cur = child;
+        for (int i = 0; i < 64; ++i) {
+            auto it = parents.find(cur);
+            if (it == parents.end() || it->second == 0 || it->second == cur) return false;
+            cur = it->second;
+            if (cur == ancestor) return true;
+        }
+        return false;
+    }
+
+    AnchorSpace ClassifyAnchorSpace(std::uint32_t jailWorld, std::uint32_t space, const WorldParents& parents)
+    {
+        if (jailWorld == 0 || space == 0 || jailWorld == space) return AnchorSpace::kSame;
+        if (IsDescendantWorld(jailWorld, space, parents)) return AnchorSpace::kChild;
+        return AnchorSpace::kUnrelated;
+    }
+
     std::optional<std::size_t> NearestIndex(Point origin, std::span<const Point> points)
     {
         std::optional<std::size_t> best;

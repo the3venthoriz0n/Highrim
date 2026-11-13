@@ -34,7 +34,9 @@ namespace Highrim::Ragdoll
         {
             if (!player || !player->Is3DLoaded() || !player->GetParentCell()) return "player not loaded";
             if (player->IsDead()) return "player dead";
-            if (player->IsInBleedout()) return "bleedout";
+            // Not Actor::IsInBleedout(): CommonLibSSE-NG defines it with RELOCATION_ID(48461, 0), which is a null call on
+            // Skyrim AE and 1.7.x (it crashed the game). The life state is plain data.
+            if (const auto* state = player->AsActorState(); state && state->IsBleedingOut()) return "bleedout";
             if (Blackout::MenuOrPauseActive()) return "menu open or paused";
             auto* map = RE::ControlMap::GetSingleton();
             if (!map || !map->AreControlsEnabled(RE::UserEvents::USER_EVENT_FLAG::kMovement)) return "controls disabled";

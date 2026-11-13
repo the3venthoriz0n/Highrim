@@ -1,0 +1,88 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the plugin on Windows, runs the tests, packages
+# dist/Highrim-<version>.zip, creates a GitHub release with it, and (when configured)
+# uploads it to Nexus Mods as a new version of an existing file.
+#
+# One-time setup (see README, "Releasing"):
+#   secret   NEXUSMODS_API_KEY   your Nexus API key
+#   variable NEXUS_FILE_ID       ID of the file to add versions to (upload the first file by hand)
+#   variable NEXUS_MOD_ID        Nexus mod ID (only needed to post the changelog)
+# Without them the Nexus step is skipped and the release is still made.
+#
+# Run manually from the Actions tab to build and package without releasing or uploading.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      NEXUS_KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: ver
+        shell: pwsh
+        run: |
+          $m = Select-String -Path CMakeLists.txt -Pattern 'project\(Highrim VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
+          if (-not $m) { throw "Could not read the version from CMakeLists.txt" }
+          $v = $m.Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$v") {
+            throw "Tag $env:GITHUB_REF_NAME does not match CMakeLists.txt version $v"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B out\build-release -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build out\build-release --config Release
+
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir out\build-release -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: powershell -File tools\make_archive.ps1 -Version ${{ steps.ver.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Highrim-${{ steps.ver.outputs.version }}
+          path: dist/Highrim-${{ steps.ver.outputs.version }}.zip
+
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$env:GITHUB_REF_NAME" "dist\Highrim-${{ steps.ver.outputs.version }}.zip" --generate-notes --title "Highrim ${{ steps.ver.outputs.version }}"
+
+      - name: Upload to Nexus Mods
+        if: github.ref_type == 'tag' && env.NEXUS_KEY != '' && vars.NEXUS_FILE_ID != ''
+        uses: Nexus-Mods/upload-action@v1.0.0-beta.11
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: ${{ vars.NEXUS_FILE_ID }}
+          filename: dist/Highrim-${{ steps.ver.outputs.version }}.zip
+          version: ${{ steps.ver.outputs.version }}
+          display_name: Highrim ${{ steps.ver.outputs.version }}
+          description: Highrim ${{ steps.ver.outputs.version }}
+          category: main
+          update_mod_version: "true"
+          mod_id: ${{ vars.NEXUS_MOD_ID }}
+          changelog: See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}

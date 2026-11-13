@@ -21,3 +21,13 @@ Design: `docs/superpowers/specs/2026-11-13-highrim-design.md`.
 ## License
 
 CommonLibSSE-NG is GPL-3.0-or-later and is linked into the plugin, so Highrim is GPL too (see COPYING).
+
+## Releasing
+
+Pushing a tag such as `v0.1.0` (it must match the version in `CMakeLists.txt`) runs `.github/workflows/release.yml`: it builds
+on Windows, runs the tests, packages `Highrim-<version>.zip`, creates a GitHub release, and uploads the zip to Nexus Mods as a new
+version of an existing file.
+
+One-time setup: create the Nexus mod page and upload the first zip by hand, then set the secret `NEXUSMODS_API_KEY` and the
+variables `NEXUS_FILE_ID` and `NEXUS_MOD_ID` (see the comments at the top of the workflow). Without them the Nexus step is skipped.
+The workflow has not been run yet, so the first run may need fixes.

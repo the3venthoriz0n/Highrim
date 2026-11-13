@@ -7,7 +7,8 @@ text strings (this plugin is not localized), new effects and values. No record l
 Usage: python -I tools/make_esp.py [<output.esp> [<Forms.h>]]
 Defaults: package/Data/Highrim.esp and src/Forms.h next to this repository's tools folder.
 
-Records, by fixed EDID (form IDs are assigned in this order from 0x800; the MCM quest keeps 0xD62):
+Records, by fixed EDID (form IDs: the 0.1.0 records are pinned in tools/pinned_form_ids.json;
+new ones are allocated in this order after the highest pinned ID, see allocate_ids):
   KYWD  HighrimDrug                                 keyword on all three drugs (for the later dealer feature)
   MGEF  HighrimFxRimerushSpeed / Stamina / Regen    Rimerush effects (clones of potion effects)
         HighrimFxVelvetResist / VelvetSlow          Velvet Haze effects
@@ -42,7 +43,6 @@ AUTHOR = "the3venthoriz0n"
 OWN = 0x01000000          # master index 1 = this plugin (master 0 is Skyrim.esm)
 FIRST_LOCAL_ID = 0x800    # light plugin range is 0x800..0xFFF
 MCM_QUEST_ID = OWN | 0xD62
-NEXT_OBJECT_ID = 0xD63
 ESL = 0x200
 
 HOLDS = ["Whiterun", "Eastmarch", "Rift", "Haafingar", "Hjaalmarch", "Reach", "Falkreath", "Pale", "Winterhold"]
@@ -211,11 +211,44 @@ COBJ_EDIDS = [r[0] for r in RECIPES]
 ORDER = [("KYWD", [KEYWORD_EDID]), ("MGEF", [m[0] for m in MGEFS]), ("SPEL", SPELL_EDIDS),
          ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS)]
 
-ids = {}
-for _rtype, _names in ORDER:
-    for _name in _names:
-        ids[_name] = OWN | (FIRST_LOCAL_ID + len(ids))
-assert len(ids) <= 0xFFF - FIRST_LOCAL_ID + 1 and max(ids.values()) < MCM_QUEST_ID
+PINNED_FILE = os.environ.get("HIGHRIM_PINNED_IDS") or os.path.join(TOOLS, "pinned_form_ids.json")
+
+
+def allocate_ids():
+    """EDID -> full form ID. Form IDs are part of the saved-game contract, so they never move.
+
+    Rule: every record that shipped in 0.1.0 keeps the local ID listed in tools/pinned_form_ids.json (the MCM quest
+    included). Pins are never edited or reused; a record dropped from the generator is listed under "retired" and
+    its ID stays reserved. Every other record gets the next free ID after the highest pinned or retired ID, handed
+    out in ORDER (group order, then list order), so the output is reproducible and adding a record at the end of
+    its list never moves anything. New records in the middle of a list shift only the unpinned ones after them.
+    """
+    with open(PINNED_FILE, encoding="utf-8") as handle:
+        data = json.load(handle)
+    pins = {name: int(value, 16) for name, value in data["pinned"].items()}
+    retired = set(data.get("retired", []))
+    generated = {name for _, names in ORDER for name in names} | {f"{MOD_NAME}_MCM"}
+    missing = sorted(set(pins) - generated - retired)
+    if missing:
+        raise SystemExit(f"pinned records missing from the generator (add them back or list them as retired): {missing}")
+    if len(set(pins.values())) != len(pins):
+        raise SystemExit("pinned_form_ids.json assigns one ID twice")
+    assert pins[f"{MOD_NAME}_MCM"] == MCM_QUEST_ID & 0xFFFFFF
+    out = {}
+    next_local = max(pins.values()) + 1
+    for _rtype, names in ORDER:
+        for name in names:
+            if name in pins:
+                out[name] = OWN | pins[name]
+            else:
+                out[name] = OWN | next_local
+                next_local += 1
+    assert min(v & 0xFFFFFF for v in out.values()) >= FIRST_LOCAL_ID and next_local - 1 <= 0xFFF, "outside light range"
+    return out, next_local
+
+
+ids, NEXT_OBJECT_ID = allocate_ids()
+assert len(set(ids.values())) == len(ids) and MCM_QUEST_ID not in ids.values()
 
 
 # --- template helpers --------------------------------------------------------------------------------

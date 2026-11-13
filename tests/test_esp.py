@@ -7,6 +7,7 @@ in the game by this test.
 Run: python -I tests/test_esp.py
 """
 import hashlib
+import json
 import os
 import re
 import struct
@@ -59,6 +60,47 @@ RECIPES = {
 # The MCM quest record exactly as the old make_mcm_plugin.py wrote it (header and data), by SHA-256.
 MCM_QUEST_RECORD_SHA256 = "c7ad8cacab853ba98ec7e5fabd447a8a7d545c06b321dcfe06a42bce3746733a"
 MCM_QUEST_FORMID = 0x01000D62
+
+
+# Local form IDs shipped in Highrim 0.1.0 (commit 593b429). They must never change: saves refer to them.
+# Kept here as a literal on purpose, separate from tools/pinned_form_ids.json, so editing one is caught by the other.
+RELEASED_0_1_0 = {
+    "HighrimDrug": 0x000800,
+    "HighrimFxRimerushSpeed": 0x000801,
+    "HighrimFxRimerushStamina": 0x000802,
+    "HighrimFxRimerushRegen": 0x000803,
+    "HighrimFxVelvetResist": 0x000804,
+    "HighrimFxVelvetSlow": 0x000805,
+    "HighrimFxRegenDown": 0x000806,
+    "HighrimAbRegenDown": 0x000807,
+    "HighrimAbStaminaDown": 0x000808,
+    "HighrimAbHealRateDown": 0x000809,
+    "HighrimComedownRimerush": 0x00080A,
+    "HighrimComedownVelvetHaze": 0x00080B,
+    "HighrimComedownDreamcap": 0x00080C,
+    "HighrimWithdrawal1": 0x00080D,
+    "HighrimWithdrawal2": 0x00080E,
+    "HighrimWithdrawal3": 0x00080F,
+    "HighrimHangover": 0x000810,
+    "HighrimBlurPulse": 0x000811,
+    "HighrimNoteWhiterun": 0x000812,
+    "HighrimNoteEastmarch": 0x000813,
+    "HighrimNoteRift": 0x000814,
+    "HighrimNoteHaafingar": 0x000815,
+    "HighrimNoteHjaalmarch": 0x000816,
+    "HighrimNoteReach": 0x000817,
+    "HighrimNoteFalkreath": 0x000818,
+    "HighrimNotePale": 0x000819,
+    "HighrimNoteWinterhold": 0x00081A,
+    "HighrimRimerush": 0x00081B,
+    "HighrimVelvetHaze": 0x00081C,
+    "HighrimDreamcap": 0x00081D,
+    "HighrimRecipeRimerush": 0x00081E,
+    "HighrimRecipeVelvetHaze": 0x00081F,
+    "HighrimRecipeDreamcap": 0x000820,
+    "Highrim_MCM": 0x000D62,
+}
+PINNED_JSON = os.path.join(ROOT, "tools", "pinned_form_ids.json")
 
 
 class Record:
@@ -251,6 +293,38 @@ class EspTests(unittest.TestCase):
                             self.assertIn(value, own, f"{record.edid} {tag} points at missing {value:08X}")
                             checked += 1
         self.assertGreater(checked, 5)
+
+    # --- pinned form IDs (0.1.0) ---------------------------------------------------
+    def test_pinned_file_matches_the_0_1_0_table(self):
+        with open(PINNED_JSON, encoding="utf-8") as handle:
+            pinned = {k: int(v, 16) for k, v in json.load(handle)["pinned"].items()}
+        self.assertEqual(pinned, RELEASED_0_1_0, "pinned_form_ids.json must keep every 0.1.0 ID unchanged")
+
+    def test_released_records_keep_their_0_1_0_form_ids(self):
+        for edid, local in RELEASED_0_1_0.items():
+            self.assertIn(edid, self.edid, f"pinned record {edid} is missing from the generated plugin")
+            self.assertEqual(self.edid[edid].formid, 0x01000000 | local, f"{edid} moved from {local:#06x}")
+
+    def test_new_records_are_allocated_after_the_highest_pinned_id(self):
+        top = max(RELEASED_0_1_0.values())
+        new = {r.edid: r.formid & 0xFFFFFF for r in self.plugin.records if r.edid not in RELEASED_0_1_0}
+        self.assertTrue(new)
+        self.assertTrue(all(local > top for local in new.values()), new)
+        self.assertEqual(sorted(new.values()), list(range(top + 1, top + 1 + len(new))), "contiguous, no reuse")
+
+    def test_generator_refuses_a_missing_pinned_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "pins.json")
+            with open(PINNED_JSON, encoding="utf-8") as handle:
+                data = json.load(handle)
+            data["pinned"]["HighrimGhostRecord"] = "0x000FF0"
+            with open(bad, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+            env = dict(os.environ, HIGHRIM_PINNED_IDS=bad)
+            result = subprocess.run([sys.executable, "-I", GENERATOR, os.path.join(tmp, "x.esp"), os.path.join(tmp, "x.h")],
+                                    env=env, capture_output=True, text=True, cwd=tmp)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("HighrimGhostRecord", result.stderr)
 
     # --- MCM quest ------------------------------------------------------------
     def test_mcm_quest_record_is_unchanged(self):

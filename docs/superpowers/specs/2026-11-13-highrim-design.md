@@ -20,7 +20,7 @@ Built for the owner's Skyrim Together Reborn (STR) sessions. Everything below is
 | Type | While high | Comedown |
 |---|---|---|
 | Stimulant | faster movement, more stamina and stamina regen | stamina drain |
-| Depressant | damage resistance, calm, slower movement | slow, drowsy |
+| Depressant | damage resistance, calm, slower movement, random ragdoll knockdowns (`bRagdoll`, shorter intervals with the stack) | slow, drowsy |
 | Hallucinogen | visual trip (colour, blur), Detect Life | disorientation |
 
 ## Non-goals (now)

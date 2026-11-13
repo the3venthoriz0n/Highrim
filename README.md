@@ -29,6 +29,13 @@ Magnitudes are about 35% above the first version (Rimerush was 25 / 50 / 100, Ve
 
 The comedown is cast about 120 real seconds after a dose. Drinking another dose of the same drug before then restarts that timer, so only one comedown is cast.
 
+## Velvet Haze ragdolls (bRagdoll)
+
+- While a Velvet Haze high lasts (from the dose until its comedown, about 120 real seconds after the last dose) the plugin knocks the player over at random intervals in real seconds, shorter with the depressant stack: stack 1 every 30 to 80 s, stack 2 20 to 55 s, stack 3 12 to 35 s, stack 4 and up 8 to 22 s. Never within 8 s of a dose, and never twice within 6 s.
+- Guards: a knockdown only happens when the player is loaded and alive, not in bleedout, combat, mounted, swimming, sitting, sleeping, in furniture, flying, transformed, in a killmove, in midair or in a scene, no menu is open and the game is not paused or in dialogue, movement controls are enabled, no blackout is running, and the player is not already ragdolled or staggered. When a guard blocks, the knockdown is postponed (the interval is not used up) and happens once the guards clear; each postponement reason is logged once.
+- `bRagdoll` off means never. The schedule is cleared on load, new game and when a blackout starts.
+- Route: `Actor::PushActorAway` does not exist in CommonLibSSE-NG, so the plugin calls `AIProcess::KnockExplosion` from a point just behind the player with a small magnitude (`kKnockMagnitude` in `src/Ragdoll.cpp`), and falls back to the `ragdollInstant` animation event. The log line is `Ragdoll: knocked down (stack N, next in S s, route R)`. UNVERIFIED in game: that either route ragdolls the player at all, and that the force is a stumble.
+
 ## Addiction and withdrawal (bAddiction)
 
 - Each drug has its own addiction level, 0 to 100. A dose adds 20 (capped at 100) after first decaying the level.
@@ -85,6 +92,7 @@ Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail 
 | `bAddiction` | 1 | Doses build addiction and withdrawal |
 | `iDoseWindowMinutes` | 30 | Game minutes between doses of the same drug that stack (slider 5 to 240, step 5) |
 | `iBlackoutDoses` | 4 | Same-drug doses in the window that cause a blackout (slider 2 to 8, step 1) |
+| `bRagdoll` | 1 | Velvet Haze knocks the player over at random intervals |
 | `bDebug` | 0 | Extra logging (for example `Dose: equip event` lines) |
 | `iDebugBlackoutKey` | 0 | DirectX scan code of a key that forces a blackout; 0 means none |
 
@@ -106,6 +114,8 @@ All effects are local and nothing calls the server, so each player runs their ow
 | Stack abilities applying, stepping up and being removed; the raised base magnitudes | Unverified in game |
 | The three screen effects (picked by editor ID only): that they look intense, trigger through `ImageSpaceModifierInstanceForm::Trigger` at the given strength and re-trigger every 10 s | Unverified in game |
 | Blackout: prison and chest discovery, item move, teleport, wake spot choice, 6 h skip, fades, hangover | Unverified in game |
+| Velvet Haze ragdolls: that `KnockExplosion` (or the `ragdollInstant` fallback) ragdolls the player, the force, the guards (including the scene and knock state checks) | Unverified in game |
+| Ragdoll interval table and scheduler (post-dose quiet time, 6 s minimum gap, stack change, reset) | Verified by unit tests (ctest) |
 | Co-save of addiction and hangover | Unverified in game |
 | Skyrim Together compatibility | Unverified in game |
 | The GitHub release workflow | Not run yet |

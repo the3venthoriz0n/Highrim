@@ -1,6 +1,7 @@
 #include "PCH.h"
 
 #include "Config.h"
+#include "Blackout.h"
 #include "Prison.h"
 
 namespace
@@ -33,6 +34,7 @@ namespace
                 spdlog::default_logger()->set_level(spdlog::level::debug);
             }
             Highrim::Prison::Discover();
+            Highrim::Blackout::Install();
             spdlog::info("Settings: enabled={} overdose={} addiction={} doseWindowMinutes={} debug={} debugBlackoutKey={}",
                 settings.enabled, settings.overdose, settings.addiction, settings.doseWindowMinutes,
                 settings.debug, settings.debugBlackoutKey);

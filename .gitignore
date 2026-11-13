@@ -35,3 +35,4 @@ dist/
 package/Data/SKSE/Plugins/Highrim.dll
 
 .superpowers/
+__pycache__/

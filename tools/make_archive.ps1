@@ -13,6 +13,17 @@ $zip  = Join-Path $dist ("Highrim-{0}.zip" -f $Version)
 if (-not (Test-Path -LiteralPath $dll)) { throw "DLL not found: $dll. Build first (build_release.bat)." }
 if (-not (Test-Path -LiteralPath $esp)) { throw "Plugin not found: $esp. Build first (build_release.bat)." }
 
+# Regenerate the plugin and run its tests; a stale or broken plugin must not be packaged.
+Push-Location $root
+try {
+    & python -I (Join-Path $root "tools\make_esp.py")
+    if ($LASTEXITCODE -ne 0) { throw "tools\make_esp.py failed." }
+    & python -I (Join-Path $root "tests\test_esp.py")
+    if ($LASTEXITCODE -ne 0) { throw "tests\test_esp.py failed; not packaging." }
+} finally {
+    Pop-Location
+}
+
 # The DLL must be the current build (it contains the version marker).
 $bytes = [System.IO.File]::ReadAllBytes($dll)
 $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)

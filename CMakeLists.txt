@@ -51,13 +51,12 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMENT "Copying Highrim.dll to package/Data/SKSE/Plugins"
 )
 
-# The MCM registration plugin (quest with MCM_ConfigBase) is generated, not hand-written.
+# The plugin (MCM quest, drugs, recipes, spells, notes) and src/Forms.h are generated, not hand-written.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_mcm_plugin.py"
-                Highrim "${CMAKE_CURRENT_SOURCE_DIR}/package/Data/Highrim.esp"
-        COMMENT "Generating package/Data/Highrim.esp"
+        COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_esp.py"
+        COMMENT "Generating package/Data/Highrim.esp and src/Forms.h"
     )
 endif()
 
@@ -67,3 +66,6 @@ add_executable(HighrimTests tests/test_main.cpp src/Config.cpp src/Core.cpp)
 target_include_directories(HighrimTests PRIVATE src)
 target_compile_definitions(HighrimTests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_test(NAME HighrimTests COMMAND HighrimTests)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME EspTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esp.py")
+endif()

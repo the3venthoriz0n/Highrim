@@ -28,21 +28,13 @@ namespace Highrim::Ragdoll
             return duration<double>(steady_clock::now().time_since_epoch()).count();
         }
 
-        // Empty when a knockdown may happen now; otherwise the first guard that failed.
+        // Empty when a knockdown may happen now; otherwise the first guard that failed. Only technical-safety
+        // guards live here (the owner wants it to fire in combat, on a mount, swimming, in furniture and so on).
         std::string GuardFailure(RE::PlayerCharacter* player)
         {
             if (!player || !player->Is3DLoaded() || !player->GetParentCell()) return "player not loaded";
             if (player->IsDead()) return "player dead";
             if (player->IsInBleedout()) return "bleedout";
-            if (player->IsInCombat()) return "in combat";
-            if (player->IsOnMount()) return "mounted";
-            if (player->IsSwimming()) return "swimming";
-            if (player->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal || player->GetOccupiedFurniture()) return "sitting, sleeping or in furniture";
-            if (player->IsFlying()) return "flying";
-            if (player->GetPlayerRuntimeData().preTransformationData) return "transformed";
-            if (player->IsInKillMove()) return "in a killmove";
-            if (player->IsInMidair()) return "in midair";
-            if (player->GetCurrentScene()) return "in a scene";
             if (Blackout::MenuOrPauseActive()) return "menu open or paused";
             auto* map = RE::ControlMap::GetSingleton();
             if (!map || !map->AreControlsEnabled(RE::UserEvents::USER_EVENT_FLAG::kMovement)) return "controls disabled";

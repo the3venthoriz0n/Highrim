@@ -32,7 +32,7 @@ The comedown is cast about 120 real seconds after a dose. Drinking another dose 
 ## Velvet Haze ragdolls (bRagdoll)
 
 - While a Velvet Haze high lasts (from the dose until its comedown, about 120 real seconds after the last dose) the plugin knocks the player over at random intervals in real seconds, shorter with the depressant stack: stack 1 every 30 to 80 s, stack 2 20 to 55 s, stack 3 12 to 35 s, stack 4 and up 8 to 22 s. Never within 8 s of a dose, and never twice within 6 s.
-- Guards: a knockdown only happens when the player is loaded and alive, not in bleedout, combat, mounted, swimming, sitting, sleeping, in furniture, flying, transformed, in a killmove, in midair or in a scene, no menu is open and the game is not paused or in dialogue, movement controls are enabled, no blackout is running, and the player is not already ragdolled or staggered. When a guard blocks, the knockdown is postponed (the interval is not used up) and happens once the guards clear; each postponement reason is logged once.
+- Guards (technical safety only; it deliberately fires in combat, on a mount, swimming, in furniture, flying or transformed): a knockdown only happens when the player is loaded and alive, not in bleedout, no menu is open and the game is not paused or in dialogue, no loading screen, movement controls are enabled, no blackout is running, and the player is not already ragdolled or staggered. When a guard blocks, the knockdown is postponed (the interval is not used up) and happens once the guards clear; each postponement reason is logged once.
 - `bRagdoll` off means never. The schedule is cleared on load, new game and when a blackout starts.
 - Route: `Actor::PushActorAway` does not exist in CommonLibSSE-NG, so the plugin calls `AIProcess::KnockExplosion` from a point just behind the player with a small magnitude (`kKnockMagnitude` in `src/Ragdoll.cpp`), and falls back to the `ragdollInstant` animation event. The log line is `Ragdoll: knocked down (stack N, next in S s, route R)`. UNVERIFIED in game: that either route ragdolls the player at all, and that the force is a stumble.
 
@@ -114,7 +114,7 @@ All effects are local and nothing calls the server, so each player runs their ow
 | Stack abilities applying, stepping up and being removed; the raised base magnitudes | Unverified in game |
 | The three screen effects (picked by editor ID only): that they look intense, trigger through `ImageSpaceModifierInstanceForm::Trigger` at the given strength and re-trigger every 10 s | Unverified in game |
 | Blackout: prison and chest discovery, item move, teleport, wake spot choice, 6 h skip, fades, hangover | Unverified in game |
-| Velvet Haze ragdolls: that `KnockExplosion` (or the `ragdollInstant` fallback) ragdolls the player, the force, the guards (including the scene and knock state checks) | Unverified in game |
+| Velvet Haze ragdolls: that `KnockExplosion` (or the `ragdollInstant` fallback) ragdolls the player, the force, the guards (ragdolling while mounted, swimming, in furniture or a scene is allowed and may misbehave) | Unverified in game |
 | Ragdoll interval table and scheduler (post-dose quiet time, 6 s minimum gap, stack change, reset) | Verified by unit tests (ctest) |
 | Co-save of addiction and hangover | Unverified in game |
 | Skyrim Together compatibility | Unverified in game |

@@ -15,8 +15,25 @@ namespace Highrim::Core
 {
     enum class DrugType { kStimulant = 0, kDepressant = 1, kHallucinogen = 2 };
 
-    // True when a last dose exists and 0 <= now - last <= windowMinutes / 60.
-    bool IsOverdose(std::optional<double> lastDoseHours, double nowHours, int windowMinutes);
+    // Stacking doses: each drug has its own stack. A dose of drug D inside the window (game minutes) of D's
+    // previous dose adds one to D's stack; otherwise D's stack restarts at 1. Other drugs never touch it.
+    inline constexpr int kMaxStack = 99;       // the count never grows past this
+    inline constexpr int kMaxStackLevel = 3;   // extra effect levels on top of the potion's own
+    struct DoseStacks
+    {
+        int    count[3]{};
+        double lastHours[3]{ -1, -1, -1 };  // negative or non-finite = no usable previous dose
+    };
+    // Returns the drug's new stack (1 or more). An unknown drug returns 0 and changes nothing. A window below
+    // 1, a clock that went backwards or a non-finite time restarts at 1.
+    int  AddStackedDose(DoseStacks& s, DrugType type, double nowHours, int windowMinutes);
+    void ResetStacks(DoseStacks& s);
+    // True when the stack has reached the blackout dose count (a count below 2 is treated as 2).
+    bool ShouldBlackout(int stack, int blackoutDoses);
+    // 0 for stack 1 (the potion alone), 1..kMaxStackLevel for stacks 2 and up.
+    int StackLevel(int stack);
+    // Screen effect strength: 0.6 at stack 1, rising in equal steps to 1.0 at stack 1 + kMaxStackLevel.
+    double StrengthForStack(int stack);
 
     struct Addiction
     {

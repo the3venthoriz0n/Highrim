@@ -12,9 +12,10 @@ namespace Highrim::Config
     struct Settings
     {
         bool          enabled{ true };
-        bool          overdose{ true };   // two doses inside the window cause a blackout
+        bool          overdose{ true };   // enough same-drug doses inside the window cause a blackout
         bool          addiction{ true };  // doses build dependency and withdrawal
         std::uint32_t doseWindowMinutes{ 30 };  // game minutes (5 to 240) that count as back to back
+        std::uint32_t blackoutDoses{ 4 };       // 2 to 8: same-drug doses inside the window that black you out
         bool          debug{ false };
         std::uint32_t debugBlackoutKey{ 0 };  // DirectX scan code; 0 = none
     };

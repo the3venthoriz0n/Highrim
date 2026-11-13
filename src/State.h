@@ -9,16 +9,15 @@ namespace Highrim::State
 
     struct DoseResult
     {
-        bool            overdose{ false };
         Core::Addiction after{};
     };
 
     // Registers the SKSE co-save callbacks (unique id 'HRIM'). Call once from SKSEPluginLoad.
     void Register();
 
-    // Records one dose at the given game hour. Overdose is judged against the most recent dose of any type
-    // before this one. When addiction is off the levels do not change but the dose time is still tracked.
-    DoseResult RecordDose(Core::DrugType type, double nowHours, int windowMinutes, bool addictionOn);
+    // Records one dose at the given game hour. When addiction is off the levels do not change but the dose time
+    // is still tracked.
+    DoseResult RecordDose(Core::DrugType type, double nowHours, bool addictionOn);
 
     [[nodiscard]] Core::Addiction Snapshot();
 

@@ -42,9 +42,9 @@ namespace
             Highrim::Prison::Discover();
             Highrim::Blackout::Install();
             Highrim::Doses::Install();
-            spdlog::info("Settings: enabled={} overdose={} addiction={} doseWindowMinutes={} debug={} debugBlackoutKey={}",
+            spdlog::info("Settings: enabled={} overdose={} addiction={} doseWindowMinutes={} blackoutDoses={} debug={} debugBlackoutKey={}",
                 settings.enabled, settings.overdose, settings.addiction, settings.doseWindowMinutes,
-                settings.debug, settings.debugBlackoutKey);
+                settings.blackoutDoses, settings.debug, settings.debugBlackoutKey);
         }
     }
 }

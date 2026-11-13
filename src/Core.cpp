@@ -38,12 +38,42 @@ namespace Highrim::Core
         }
     }
 
-    bool IsOverdose(std::optional<double> lastDoseHours, double nowHours, int windowMinutes)
+    int AddStackedDose(DoseStacks& s, DrugType type, double nowHours, int windowMinutes)
     {
-        if (!lastDoseHours || windowMinutes < 1) return false;
-        if (!std::isfinite(*lastDoseHours) || !std::isfinite(nowHours)) return false;
-        const double elapsed = nowHours - *lastDoseHours;
-        return elapsed >= 0.0 && elapsed <= static_cast<double>(windowMinutes) / 60.0;
+        const int i = static_cast<int>(type);
+        if (i < 0 || i > 2) return 0;
+        bool inWindow = false;
+        if (windowMinutes >= 1 && std::isfinite(nowHours) && std::isfinite(s.lastHours[i]) && s.lastHours[i] >= 0.0 &&
+            s.count[i] > 0) {
+            const double elapsed = nowHours - s.lastHours[i];
+            inWindow = elapsed >= 0.0 && elapsed <= static_cast<double>(windowMinutes) / 60.0;
+        }
+        s.count[i]     = inWindow ? std::min(s.count[i] + 1, kMaxStack) : 1;
+        s.lastHours[i] = std::isfinite(nowHours) ? nowHours : -1.0;
+        return s.count[i];
+    }
+
+    void ResetStacks(DoseStacks& s)
+    {
+        s = DoseStacks{};
+    }
+
+    bool ShouldBlackout(int stack, int blackoutDoses)
+    {
+        return stack >= std::max(blackoutDoses, 2);
+    }
+
+    int StackLevel(int stack)
+    {
+        return std::clamp(stack - 1, 0, kMaxStackLevel);
+    }
+
+    double StrengthForStack(int stack)
+    {
+        const int level = StackLevel(stack);
+        if (level == 0) return 0.6;
+        if (level >= kMaxStackLevel) return 1.0;
+        return 0.6 + 0.4 * (static_cast<double>(level) / static_cast<double>(kMaxStackLevel));
     }
 
     void Decay(Addiction& a, double nowHours)

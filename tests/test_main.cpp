@@ -38,20 +38,49 @@ namespace
         const double nan = std::numeric_limits<double>::quiet_NaN();
         const double inf = std::numeric_limits<double>::infinity();
 
-        // IsOverdose: window 30 min = 0.5 h.
-        CHECK(!IsOverdose(std::nullopt, 10.0, 30));
-        CHECK(IsOverdose(10.0, 10.0, 30));                 // same instant
-        CHECK(IsOverdose(10.0, 10.25, 30));
-        CHECK(IsOverdose(10.0, 10.5, 30));                 // exactly the window
-        CHECK(!IsOverdose(10.0, 10.5 + 1.0 / 3600, 30));   // one second over
-        CHECK(!IsOverdose(10.0, 9.99, 30));                // clock went backwards
-        CHECK(!IsOverdose(nan, 10.0, 30));
-        CHECK(!IsOverdose(10.0, nan, 30));
-        CHECK(!IsOverdose(10.0, inf, 30));
-        CHECK(!IsOverdose(inf, 10.0, 30));
-        CHECK(!IsOverdose(10.0, 10.0, 0));
-        CHECK(!IsOverdose(10.0, 10.0, -5));
-        CHECK(IsOverdose(10.0, 10.0, 1));
+        // Dose stacks: per drug, window 30 min = 0.5 h.
+        {
+            DoseStacks st{};
+            CHECK(AddStackedDose(st, DrugType::kStimulant, 10.0, 30) == 1);   // first dose
+            CHECK(AddStackedDose(st, DrugType::kStimulant, 10.0, 30) == 2);   // same instant counts
+            CHECK(AddStackedDose(st, DrugType::kStimulant, 10.5, 30) == 3);   // exactly the window
+            CHECK(AddStackedDose(st, DrugType::kDepressant, 10.6, 30) == 1);  // other drug has its own stack
+            CHECK(AddStackedDose(st, DrugType::kStimulant, 10.9, 30) == 4);   // other drugs do not touch it
+            CHECK(AddStackedDose(st, DrugType::kStimulant, 10.9 + 0.5 + 1.0 / 3600, 30) == 1);  // one second over restarts
+            CHECK(AddStackedDose(st, DrugType::kDepressant, 5.0, 30) == 1);   // clock went backwards restarts
+            CHECK(AddStackedDose(st, DrugType::kDepressant, 5.1, 30) == 2);
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, nan, 30) == 1);  // non-finite restarts at 1
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, 20.0, 30) == 1);  // and leaves no usable last dose
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, 20.1, 30) == 2);
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, inf, 30) == 1);
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, 20.0, 30) == 1);
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, 20.0, 0) == 1);   // bad window restarts
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, 20.0, -5) == 1);
+            CHECK(AddStackedDose(st, DrugType::kHallucinogen, 20.0, 1) == 2);
+            CHECK(AddStackedDose(st, static_cast<DrugType>(7), 20.0, 30) == 0);  // unknown drug is ignored
+            DoseStacks big{};
+            int last = 0;
+            for (int i = 0; i < 5000; ++i) last = AddStackedDose(big, DrugType::kStimulant, 1.0, 30);
+            CHECK(last > 8 && last < 5000);  // capped, never overflows
+            ResetStacks(st);
+            CHECK(AddStackedDose(st, DrugType::kStimulant, 10.1, 30) == 1);
+        }
+        CHECK(!ShouldBlackout(3, 4));
+        CHECK(ShouldBlackout(4, 4));
+        CHECK(ShouldBlackout(5, 4));
+        CHECK(!ShouldBlackout(0, 4));
+        CHECK(ShouldBlackout(2, 2));
+        CHECK(!ShouldBlackout(1, 2));
+        CHECK(ShouldBlackout(2, 0));   // a bad setting counts as the minimum of 2
+        CHECK(!ShouldBlackout(1, -3));
+        CHECK(StackLevel(0) == 0 && StackLevel(1) == 0 && StackLevel(-4) == 0);
+        CHECK(StackLevel(2) == 1 && StackLevel(3) == 2 && StackLevel(4) == 3);
+        CHECK(StackLevel(5) == 3 && StackLevel(1000) == 3);
+        CHECK(StrengthForStack(1) == 0.6);
+        CHECK(StrengthForStack(0) == 0.6 && StrengthForStack(-3) == 0.6);
+        CHECK(StrengthForStack(4) == 1.0 && StrengthForStack(8) == 1.0 && StrengthForStack(100000) == 1.0);
+        CHECK(StrengthForStack(1) < StrengthForStack(2) && StrengthForStack(2) < StrengthForStack(3) &&
+              StrengthForStack(3) < StrengthForStack(4));
 
         auto fresh = [] {
             Addiction a{};
@@ -462,19 +491,21 @@ int main()
     auto s = Highrim::Config::Get();
     CHECK(s.enabled && s.overdose && s.addiction && !s.debug);
     CHECK(s.doseWindowMinutes == 30);
+    CHECK(s.blackoutDoses == 4);
     CHECK(s.debugBlackoutKey == 0);
 
     // Shipped defaults file.
     Write(data / "MCM/Config/Highrim/settings.ini",
-        "[General]\nbEnabled = 1\nbOverdose = 1\nbAddiction = 0\niDoseWindowMinutes = 60\nbDebug = 0\niDebugBlackoutKey = 0\n");
+        "[General]\nbEnabled = 1\nbOverdose = 1\nbAddiction = 0\niDoseWindowMinutes = 60\niBlackoutDoses = 6\nbDebug = 0\niDebugBlackoutKey = 0\n");
     Highrim::Config::Load();
     s = Highrim::Config::Get();
     CHECK(s.enabled && s.overdose && !s.addiction && !s.debug);
     CHECK(s.doseWindowMinutes == 60);
+    CHECK(s.blackoutDoses == 6);
 
     // User override wins; values are clamped.
     Write(data / "MCM/Settings/Highrim.ini",
-        "[General]\nbOverdose = 0\nbDebug = 1\niDoseWindowMinutes = 9999\niDebugBlackoutKey = 24\n");
+        "[General]\nbOverdose = 0\nbDebug = 1\niDoseWindowMinutes = 9999\niBlackoutDoses = 99\niDebugBlackoutKey = 24\n");
     Highrim::Config::Load();
     s = Highrim::Config::Get();
     CHECK(s.enabled);
@@ -482,6 +513,7 @@ int main()
     CHECK(!s.addiction);  // not overridden: shipped default still applies
     CHECK(s.debug);
     CHECK(s.doseWindowMinutes == 240);
+    CHECK(s.blackoutDoses == 8);  // clamped
     CHECK(s.debugBlackoutKey == 24);
 
     fs::remove_all(data.parent_path());

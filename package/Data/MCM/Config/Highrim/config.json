@@ -21,7 +21,7 @@
 			"id": "bOverdose:General",
 			"text": "Overdose blackout",
 			"type": "toggle",
-			"help": "Two doses back to back make you black out.",
+			"help": "Enough same-drug doses make you black out.",
 			"valueOptions": {
 				"sourceType": "ModSettingBool"
 			}
@@ -45,6 +45,19 @@
 				"max": 240,
 				"step": 5,
 				"formatString": "{0} min",
+				"sourceType": "ModSettingInt"
+			}
+		},
+		{
+			"id": "iBlackoutDoses:General",
+			"text": "Doses to blackout",
+			"type": "slider",
+			"help": "Same-drug doses in the window.",
+			"valueOptions": {
+				"min": 2,
+				"max": 8,
+				"step": 1,
+				"formatString": "{0}",
 				"sourceType": "ModSettingInt"
 			}
 		},

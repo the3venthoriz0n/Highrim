@@ -100,17 +100,10 @@ namespace Highrim::State
         ser->SetRevertCallback(OnRevert);
     }
 
-    DoseResult RecordDose(Core::DrugType type, double nowHours, int windowMinutes, bool addictionOn)
+    DoseResult RecordDose(Core::DrugType type, double nowHours, bool addictionOn)
     {
-        std::lock_guard       lock(g_mutex);
-        std::optional<double> last;
-        for (double d : g_addiction.lastDoseHours) {
-            if (d >= 0.0 && (!last || d > *last)) {
-                last = d;
-            }
-        }
-        DoseResult r;
-        r.overdose = Core::IsOverdose(last, nowHours, windowMinutes);
+        std::lock_guard lock(g_mutex);
+        DoseResult      r;
         const Core::Addiction before = g_addiction;
         Core::AddDose(g_addiction, type, nowHours);
         if (!addictionOn) {

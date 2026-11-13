@@ -104,6 +104,7 @@ namespace Highrim::Config
             s.overdose = Flag("General", "bOverdose", s.overdose);
             s.addiction = Flag("General", "bAddiction", s.addiction);
             s.doseWindowMinutes = Number("General", "iDoseWindowMinutes", s.doseWindowMinutes, 5, 240);
+            s.blackoutDoses = Number("General", "iBlackoutDoses", s.blackoutDoses, 2, 8);
             s.debug = Flag("General", "bDebug", s.debug);
             s.debugBlackoutKey = Number("General", "iDebugBlackoutKey", s.debugBlackoutKey, 0, 1000);
             return s;

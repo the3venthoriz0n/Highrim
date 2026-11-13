@@ -108,6 +108,32 @@ namespace Highrim::Core
     inline constexpr double kBlurMaxSeconds = 180.0;
     bool TickBlurPulse(std::optional<double>& nextDue, double nowSeconds, int tier, bool hangover, double rng01);
 
+    // Velvet Haze ragdolls: while the depressant high lasts, a knockdown is due at a random real-second interval
+    // that shrinks with the depressant stack (1: 30-80, 2: 20-55, 3: 12-35, 4+: 8-22; below 1 counts as 1).
+    // Never within kRagdollPostDoseSeconds of a dose, never twice within kRagdollMinGapSeconds.
+    inline constexpr double kRagdollPostDoseSeconds = 8.0;
+    inline constexpr double kRagdollMinGapSeconds   = 6.0;
+    struct IntervalRange
+    {
+        double minSeconds;
+        double maxSeconds;
+    };
+    IntervalRange IntervalRangeForStack(int stack);
+    struct RagdollState
+    {
+        std::optional<double> nextDue;
+        int                   stack{ 0 };  // the stack the schedule was made for; 0 = none
+        double                lastDoseSeconds{ -1e18 };
+        double                lastKnockSeconds{ -1e18 };
+    };
+    // A dose restarts the schedule (and the post-dose quiet time).
+    void OnRagdollDose(RagdollState& s, double nowSeconds);
+    // Returns true when a knockdown should happen now (already rescheduled). Not active clears the schedule.
+    // Active with no schedule, or a changed stack, schedules from now without casting. A due knockdown that is
+    // still inside the post-dose or minimum-gap quiet time stays due. Callers skip the call while a guard blocks
+    // (so a postponement never consumes the interval) but still call it when not active. Non-finite now is ignored.
+    bool TickRagdoll(RagdollState& s, double nowSeconds, bool active, int stack, double rng01);
+
     // Overdose deferral: a due overdose waits while a menu is open or the game is paused, and is dropped after
     // kOverdoseGiveUpSeconds of real time of waiting (counted from the due time). Non-finite times drop it.
     inline constexpr double kOverdoseGiveUpSeconds = 30.0;

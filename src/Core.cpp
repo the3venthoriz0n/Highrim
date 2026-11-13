@@ -391,4 +391,45 @@ namespace Highrim::Core
         nextDue = nowSeconds + interval;
         return true;
     }
+
+    IntervalRange IntervalRangeForStack(int stack)
+    {
+        if (stack <= 1) return { 30.0, 80.0 };
+        if (stack == 2) return { 20.0, 55.0 };
+        if (stack == 3) return { 12.0, 35.0 };
+        return { 8.0, 22.0 };
+    }
+
+    void OnRagdollDose(RagdollState& s, double nowSeconds)
+    {
+        if (!std::isfinite(nowSeconds)) return;
+        s.lastDoseSeconds = nowSeconds;
+        s.nextDue.reset();
+    }
+
+    bool TickRagdoll(RagdollState& s, double nowSeconds, bool active, int stack, double rng01)
+    {
+        if (!std::isfinite(nowSeconds)) return false;
+        if (!active) {
+            s.nextDue.reset();
+            s.stack = 0;
+            return false;
+        }
+        if (stack < 1) stack = 1;
+        const double r     = std::isfinite(rng01) ? std::clamp(rng01, 0.0, 1.0) : 0.5;
+        const auto   range = IntervalRangeForStack(stack);
+        const double interval = range.minSeconds + r * (range.maxSeconds - range.minSeconds);
+        if (!s.nextDue || stack != s.stack) {
+            s.stack   = stack;
+            s.nextDue = std::max(nowSeconds + interval, s.lastDoseSeconds + kRagdollPostDoseSeconds);
+            return false;
+        }
+        if (nowSeconds < *s.nextDue) return false;
+        if (nowSeconds < s.lastDoseSeconds + kRagdollPostDoseSeconds || nowSeconds < s.lastKnockSeconds + kRagdollMinGapSeconds) {
+            return false;
+        }
+        s.nextDue          = nowSeconds + interval;
+        s.lastKnockSeconds = nowSeconds;
+        return true;
+    }
 }

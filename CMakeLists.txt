@@ -31,6 +31,8 @@ set(PROJECT_SOURCES
     src/Doses.cpp
     src/State.h
     src/State.cpp
+    src/Ragdoll.h
+    src/Ragdoll.cpp
     src/Withdrawal.h
     src/Withdrawal.cpp
 )

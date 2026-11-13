@@ -472,6 +472,58 @@ namespace
             CHECK(d2 && *d2 == 180.0);
         }
 
+        // Ragdoll intervals and scheduler.
+        {
+            CHECK(IntervalRangeForStack(-3).minSeconds == 30.0 && IntervalRangeForStack(0).maxSeconds == 80.0);
+            CHECK(IntervalRangeForStack(1).minSeconds == 30.0 && IntervalRangeForStack(1).maxSeconds == 80.0);
+            CHECK(IntervalRangeForStack(2).minSeconds == 20.0 && IntervalRangeForStack(2).maxSeconds == 55.0);
+            CHECK(IntervalRangeForStack(3).minSeconds == 12.0 && IntervalRangeForStack(3).maxSeconds == 35.0);
+            CHECK(IntervalRangeForStack(4).minSeconds == 8.0 && IntervalRangeForStack(4).maxSeconds == 22.0);
+            CHECK(IntervalRangeForStack(99).minSeconds == 8.0);
+
+            RagdollState s;
+            OnRagdollDose(s, 100.0);
+            CHECK(!TickRagdoll(s, 100.5, true, 1, 0.0));            // schedules 30 s out
+            CHECK(s.nextDue && *s.nextDue == 130.5);
+            CHECK(!TickRagdoll(s, 130.4, true, 1, 0.5));
+            CHECK(TickRagdoll(s, 130.5, true, 1, 1.0));             // knock, next 80 s out
+            CHECK(s.nextDue && *s.nextDue == 210.5);
+            CHECK(!TickRagdoll(s, 131.0, true, 1, 0.5));
+            CHECK(!TickRagdoll(s, 131.0, true, 2, 0.0));            // stack change reschedules, no cast
+            CHECK(s.nextDue && *s.nextDue == 151.0);
+            CHECK(TickRagdoll(s, 500.0, true, 2, 0.0));             // late still casts once
+            CHECK(s.nextDue && *s.nextDue == 520.0);
+            CHECK(!TickRagdoll(s, 501.0, true, 2, 0.0));
+            CHECK(!TickRagdoll(s, 502.0, false, 2, 0.0));           // high ended: cleared
+            CHECK(!s.nextDue.has_value());
+            CHECK(!TickRagdoll(s, 600.0, false, 2, 0.0));
+            // The post-dose quiet time: first knockdown never within 8 s of a dose, even with a tiny interval.
+            RagdollState q;
+            OnRagdollDose(q, 1000.0);
+            CHECK(!TickRagdoll(q, 1000.0, true, 5, 0.0));           // 8 s interval from the dose
+            CHECK(q.nextDue && *q.nextDue == 1008.0);
+            CHECK(!TickRagdoll(q, 1007.9, true, 5, 0.0));
+            CHECK(TickRagdoll(q, 1008.0, true, 5, 0.0));
+            // Due but inside the post-dose time (a dose arrived after scheduling and nextDue was kept): stays due.
+            RagdollState g;
+            CHECK(!TickRagdoll(g, 0.0, true, 4, 0.0));
+            g.lastDoseSeconds = 7.0;
+            CHECK(!TickRagdoll(g, 8.0, true, 4, 0.0));              // due, but 1 s after the dose
+            CHECK(g.nextDue && *g.nextDue == 8.0);
+            CHECK(TickRagdoll(g, 15.0, true, 4, 0.0));
+            // Minimum gap between knockdowns is 6 s.
+            g.nextDue = 16.0;
+            CHECK(!TickRagdoll(g, 16.0, true, 4, 0.0));             // only 1 s since the last knock
+            CHECK(TickRagdoll(g, 21.0, true, 4, 0.0));
+            // A dose during the high restarts the schedule.
+            OnRagdollDose(g, 30.0);
+            CHECK(!g.nextDue.has_value());
+            CHECK(!TickRagdoll(g, 31.0, true, 4, 0.0));
+            CHECK(g.nextDue && *g.nextDue == 39.0);
+            CHECK(!TickRagdoll(g, std::numeric_limits<double>::quiet_NaN(), true, 4, 0.0));
+            CHECK(TickRagdoll(g, 1e9, true, 4, std::numeric_limits<double>::quiet_NaN()));  // NaN rng -> 0.5, late knock
+        }
+
         CHECK(NoteText("Dawnstar Sanctuary") == "Your things are in Dawnstar Sanctuary.");
         CHECK(NoteText("") == "Your things are in .");
         return 0;
@@ -492,6 +544,7 @@ int main()
     CHECK(s.enabled && s.overdose && s.addiction && !s.debug);
     CHECK(s.doseWindowMinutes == 30);
     CHECK(s.blackoutDoses == 4);
+    CHECK(s.ragdoll);
     CHECK(s.debugBlackoutKey == 0);
 
     // Shipped defaults file.

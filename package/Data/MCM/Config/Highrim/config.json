@@ -62,6 +62,15 @@
 			}
 		},
 		{
+			"id": "bRagdoll:General",
+			"text": "Depressant ragdolls",
+			"type": "toggle",
+			"help": "Velvet Haze can knock you over.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
 			"text": "Debug",
 			"type": "header"
 		},

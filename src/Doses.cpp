@@ -6,6 +6,7 @@
 #include "Config.h"
 #include "Core.h"
 #include "Forms.h"
+#include "Ragdoll.h"
 #include "State.h"
 
 #include <array>
@@ -279,6 +280,9 @@ namespace Highrim::Doses
                 settings.addiction ? "on" : "off", settings.overdose ? "on" : "off");
 
             Core::OnComedownDose(g_comedowns, type, RealSeconds());
+            if (type == Core::DrugType::kDepressant) {
+                Ragdoll::OnDepressantDose();
+            }
             Core::ScheduleDiagnostics(g_diagnostics, type, RealSeconds());
             if (blackout || g_overdoseDue) {
                 // A blackout is coming: no stack ability from here on (and the current one goes).
@@ -340,6 +344,8 @@ namespace Highrim::Doses
         std::vector<std::pair<Core::DrugType, double>> visuals;
         const bool                  uiBlocked = Blackout::MenuOrPauseActive();
         const bool                  busy      = Blackout::Busy();
+        bool                        ragdollActive = false;
+        int                         ragdollStack  = 1;
         {
             std::lock_guard lock(g_mutex);
             const double    now = RealSeconds();
@@ -370,6 +376,9 @@ namespace Highrim::Doses
                     g_visualDue[i] = now + kVisualPeriodSeconds;
                 }
             }
+            // The Velvet Haze high lasts from its dose until its comedown is taken above.
+            ragdollActive = g_comedowns.dueSeconds[static_cast<std::size_t>(Core::DrugType::kDepressant)].has_value();
+            ragdollStack  = g_stacks.count[static_cast<std::size_t>(Core::DrugType::kDepressant)];
             while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {
                 diagnostics.push_back(*e);
             }
@@ -381,6 +390,7 @@ namespace Highrim::Doses
             TriggerVisual(type, strength);
         }
         SyncStackAbilities();
+        Ragdoll::Tick(ragdollActive && !runOverdose, ragdollStack);
         for (const auto& e : diagnostics) {
             LogActiveEffects(e.type, e.pass);
         }
@@ -403,5 +413,6 @@ namespace Highrim::Doses
         g_appliedLevel = { -1, -1, -1 };
         g_visualDue    = {};
         ++g_epoch;
+        Ragdoll::Reset();
     }
 }

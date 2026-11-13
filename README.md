@@ -15,3 +15,7 @@ Built with C++23, CommonLibSSE-NG v15.7.3 (git submodule) and vcpkg. Needs SKSE,
 Tests: `ctest --test-dir out\build-release -C Release --output-on-failure`.
 
 Design: `docs/superpowers/specs/2026-11-13-highrim-design.md`.
+
+## License
+
+CommonLibSSE-NG is GPL-3.0-or-later and is linked into the plugin, so Highrim is GPL too (see COPYING).

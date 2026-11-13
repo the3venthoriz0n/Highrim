@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "Core.h"
 #include "Forms.h"
+#include "GameData.h"
 
 #include <cmath>
 #include <cstdio>
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #define CHECK(expr)                                                         \
     do {                                                                    \
@@ -184,6 +186,111 @@ namespace
             // none in band
             CHECK(!PickWakeSpot(c, { 0, 0 }, 20.f, 30.f, 0.5f).has_value());
             CHECK(!PickWakeSpot(c, { 0, 0 }, 6.f, 9.f, 0.5f).has_value());
+        }
+
+        // PickWakeSpotStaged: stage 1 15000-80000, stage 2 8000-150000, stage 3 3000-unbounded; never closer than 3000.
+        {
+            const std::span<const Point> noPoints;
+            CHECK(!PickWakeSpotStaged(noPoints, { 0, 0 }, 0.5f).has_value());
+            // Only stage 1 candidates (and a too-close one): stage 1.
+            const Point a[] = { { 2000.f, 0.f }, { 20000.f, 0.f }, { 0.f, -50000.f }, { 100000.f, 0.f } };
+            auto p1 = PickWakeSpotStaged(a, { 0, 0 }, 0.0f);
+            CHECK(p1 && p1->stage == 1 && p1->index == 1 && p1->inBand == 2);
+            CHECK(std::fabs(p1->distance - 20000.f) < 1.f);
+            auto p1b = PickWakeSpotStaged(a, { 0, 0 }, 0.99f);
+            CHECK(p1b && p1b->stage == 1 && p1b->index == 2);
+            // Nothing in 15000-80000 but something in 8000-150000: stage 2.
+            const Point b[] = { { 2999.f, 0.f }, { 9000.f, 0.f }, { 120000.f, 0.f } };
+            auto p2 = PickWakeSpotStaged(b, { 0, 0 }, 0.99f);
+            CHECK(p2 && p2->stage == 2 && p2->index == 2 && p2->inBand == 2);
+            // Only 3000..8000 or beyond 150000: stage 3 (unbounded above), edge 3000 inclusive.
+            const Point c[] = { { 1000.f, 0.f }, { 3000.f, 0.f }, { 200000.f, 0.f } };
+            auto p3 = PickWakeSpotStaged(c, { 0, 0 }, 0.0f);
+            CHECK(p3 && p3->stage == 3 && p3->index == 1 && p3->inBand == 2);
+            auto p3b = PickWakeSpotStaged(c, { 0, 0 }, 1.0f);
+            CHECK(p3b && p3b->stage == 3 && p3b->index == 2);
+            // Everything closer than 3000: no candidates in any stage.
+            const Point d[] = { { 0.f, 0.f }, { 2999.f, 0.f } };
+            CHECK(!PickWakeSpotStaged(d, { 0, 0 }, 0.5f).has_value());
+            // Origin is honoured and rng is clamped (NaN -> first).
+            const Point e[] = { { 100000.f, 100000.f }, { 120000.f, 100000.f }, { 190000.f, 100000.f } };
+            auto p4 = PickWakeSpotStaged(e, { 100000.f, 100000.f }, std::numeric_limits<float>::quiet_NaN());
+            CHECK(p4 && p4->stage == 1 && p4->index == 1);
+            auto p5 = PickWakeSpotStaged(e, { 100000.f, 100000.f }, 9.f);
+            CHECK(p5 && p5->index == 1);  // 90000 away is outside stage 1, only index 1 (20000) is in
+        }
+
+        // Hold choice: capitals by worldspace id, otherwise nearest by Tamriel-space anchor; only holds with a chest.
+        {
+            const HoldInfo holds[] = {
+                { true, { 0.f, 0.f } },        // 0 Whiterun-like, city world 0x100
+                { true, { 100000.f, 0.f } },   // 1 city world 0x200
+                { true, { 50000.f, 90000.f } },  // 2 no city world
+                { false, { 40000.f, 0.f } },   // 3 no chest (Winterhold-like), nearest to many points
+            };
+            const WorldHold worlds[] = { { 0x100, 0 }, { 0x200, 1 }, { 0x300, 0 }, { 0x400, 3 } };
+            CHECK(!DirectHoldForWorld(0, worlds, holds).has_value());
+            CHECK(DirectHoldForWorld(0x100, worlds, holds) == std::optional<std::size_t>(0));
+            CHECK(DirectHoldForWorld(0x300, worlds, holds) == std::optional<std::size_t>(0));  // second world of a hold
+            CHECK(!DirectHoldForWorld(0x400, worlds, holds).has_value());  // that hold has no chest
+            CHECK(!DirectHoldForWorld(0x3C, worlds, holds).has_value());
+            // In a city worldspace: that hold, whatever the position says.
+            auto c1 = ChooseHold(holds, worlds, 0x200, Point{ 0.f, 0.f });
+            CHECK(c1 && c1->index == 1 && c1->reason == HoldReason::kCapitalWorld);
+            auto c2 = ChooseHold(holds, worlds, 0x100, std::nullopt);
+            CHECK(c2 && c2->index == 0 && c2->reason == HoldReason::kCapitalWorld);
+            // In the wilderness: nearest, skipping the hold without a chest even though it is closest.
+            auto c3 = ChooseHold(holds, worlds, 0x3C, Point{ 41000.f, 0.f });
+            CHECK(c3 && c3->index == 0 && c3->reason == HoldReason::kNearest);
+            auto c4 = ChooseHold(holds, worlds, 0x3C, Point{ 90000.f, 10000.f });
+            CHECK(c4 && c4->index == 1);
+            auto c5 = ChooseHold(holds, worlds, 0x3C, Point{ 50000.f, 80000.f });
+            CHECK(c5 && c5->index == 2);
+            // Unknown position and not in a city: nothing to choose.
+            CHECK(!ChooseHold(holds, worlds, 0x3C, std::nullopt).has_value());
+            const HoldInfo nochest[] = { { false, { 0.f, 0.f } } };
+            CHECK(!ChooseHold(nochest, worlds, 0x3C, Point{ 1.f, 1.f }).has_value());
+        }
+
+        // The generated Skyrim.esm table feeds the hold choice: capitals by worldspace, nearest otherwise.
+        {
+            using namespace Highrim::GameData;
+            std::vector<HoldInfo>  holds;
+            std::vector<WorldHold> worlds;
+            for (std::size_t i = 0; i < std::size(kHoldAnchors); ++i) {
+                const auto& a = kHoldAnchors[i];
+                // Winterhold (the last entry, 0x0002816F) has no confiscation chest in vanilla.
+                holds.push_back({ a.factionId != 0x0002816F, { a.x, a.y } });
+                if (a.cityWorld != 0) {
+                    worlds.push_back({ a.cityWorld, i });
+                }
+            }
+            CHECK(holds.size() == 9);
+            for (const auto& w : kWorlds) {
+                if (w.holdFaction != 0) {
+                    bool found = false;
+                    for (std::size_t i = 0; i < std::size(kHoldAnchors); ++i) {
+                        found = found || kHoldAnchors[i].factionId == w.holdFaction;
+                    }
+                    CHECK(found);
+                }
+            }
+            // Windhelm's worldspace (0001691D) is Eastmarch, Whiterun's (0001A26F) is Whiterun, whatever the position.
+            auto win = ChooseHold(holds, worlds, 0x0001691D, Point{ -150000.f, 0.f });
+            CHECK(win && kHoldAnchors[win->index].factionId == 0x000267E3 && win->reason == HoldReason::kCapitalWorld);
+            auto wr = ChooseHold(holds, worlds, 0x0001A26F, std::nullopt);
+            CHECK(wr && kHoldAnchors[wr->index].factionId == 0x000267EA);
+            // Wilderness: next to Falkreath's jail marker and to Winterhold's (which has no chest: Pale is picked instead).
+            auto fk = ChooseHold(holds, worlds, 0x3C, Point{ -29000.f, -87000.f });
+            CHECK(fk && kHoldAnchors[fk->index].factionId == 0x00028170 && fk->reason == HoldReason::kNearest);
+            auto wh = ChooseHold(holds, worlds, 0x3C, Point{ 109783.f, 100980.f });
+            CHECK(wh && kHoldAnchors[wh->index].factionId != 0x0002816F);
+            // The marker table: plenty of unique ids, strictly sorted, inside the map.
+            CHECK(std::size(kTamrielMarkers) > 200);
+            for (std::size_t i = 0; i < std::size(kTamrielMarkers); ++i) {
+                CHECK(i == 0 || kTamrielMarkers[i - 1].id < kTamrielMarkers[i].id);
+                CHECK(std::fabs(kTamrielMarkers[i].x) < 250000.f && std::fabs(kTamrielMarkers[i].y) < 250000.f);
+            }
         }
 
         // Worldspace relations: 3C Tamriel, 100 Whiterun city (child of 3C), 200 Solitude city, 300 a separate root.

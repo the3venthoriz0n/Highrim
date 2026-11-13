@@ -103,6 +103,44 @@ namespace Highrim::Core
     std::optional<std::size_t> PickWakeSpot(std::span<const Point> candidates, Point origin,
         float minDist, float maxDist, float rng01);
 
+    // Wake spot choice in stages, so a sparse area still yields a spot. Distances are measured from the prison's
+    // anchor; candidates closer than kWakeNever are never used. Stage 1 15000-80000, stage 2 8000-150000,
+    // stage 3 kWakeNever-unbounded. The first stage with any candidate decides; the pick inside it is
+    // floor(rng01 * count) over the candidates in their given order (rng01 clamped to 0..1, NaN -> 0).
+    inline constexpr float kWakeNever = 3000.0f;
+    struct WakeSpotPick
+    {
+        std::size_t index;     // into the candidates span
+        int         stage;     // 1, 2 or 3
+        std::size_t inBand;    // how many candidates the stage had
+        float       distance;  // of the pick from the origin
+    };
+    std::optional<WakeSpotPick> PickWakeSpotStaged(std::span<const Point> candidates, Point origin, float rng01);
+
+    // Hold choice. anchor is the hold prison's position in Tamriel space. WorldHold says "a player in worldspace
+    // `world` is in the capital of hold `hold`" (a hold can have several: its city worldspace and its castle).
+    struct HoldInfo
+    {
+        bool  hasChest;
+        Point anchor;
+    };
+    struct WorldHold
+    {
+        std::uint32_t world;
+        std::size_t   hold;
+    };
+    enum class HoldReason { kCapitalWorld, kNearest };
+    struct HoldChoice
+    {
+        std::size_t index;
+        HoldReason  reason;
+    };
+    std::optional<std::size_t> DirectHoldForWorld(std::uint32_t world, std::span<const WorldHold> worlds, std::span<const HoldInfo> holds);
+    // A player inside a hold's capital worldspace gets that hold; otherwise the nearest hold with a chest to
+    // tamrielPos. nullopt when neither applies.
+    std::optional<HoldChoice> ChooseHold(std::span<const HoldInfo> holds, std::span<const WorldHold> worlds,
+        std::uint32_t playerWorld, std::optional<Point> tamrielPos);
+
     // Worldspace relations, as a plain id -> parent id map (0 or absent = no parent). Cycles are cut.
     using WorldParents = std::map<std::uint32_t, std::uint32_t>;
     std::uint32_t WorldRoot(std::uint32_t world, const WorldParents& parents);

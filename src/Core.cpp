@@ -270,6 +270,65 @@ namespace Highrim::Core
         return band[pick];
     }
 
+    std::optional<WakeSpotPick> PickWakeSpotStaged(std::span<const Point> candidates, Point origin, float rng01)
+    {
+        struct Stage
+        {
+            float minDist, maxDist;
+        };
+        static constexpr Stage stages[] = {
+            { 15000.0f, 80000.0f },
+            { 8000.0f, 150000.0f },
+            { kWakeNever, std::numeric_limits<float>::infinity() },
+        };
+        if (!(rng01 > 0.f)) rng01 = 0.f;  // also catches NaN
+        if (rng01 > 1.f) rng01 = 1.f;
+        for (int s = 0; s < 3; ++s) {
+            std::vector<std::pair<std::size_t, float>> band;
+            for (std::size_t i = 0; i < candidates.size(); ++i) {
+                const float dist = std::hypot(candidates[i].x - origin.x, candidates[i].y - origin.y);
+                if (dist >= kWakeNever && dist >= stages[s].minDist && dist <= stages[s].maxDist) band.emplace_back(i, dist);
+            }
+            if (band.empty()) continue;
+            auto pick = static_cast<std::size_t>(std::floor(static_cast<double>(rng01) * static_cast<double>(band.size())));
+            pick = std::min(pick, band.size() - 1);
+            return WakeSpotPick{ band[pick].first, s + 1, band.size(), band[pick].second };
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::size_t> DirectHoldForWorld(std::uint32_t world, std::span<const WorldHold> worlds, std::span<const HoldInfo> holds)
+    {
+        if (world == 0) return std::nullopt;
+        for (const auto& w : worlds) {
+            if (w.world == world && w.hold < holds.size() && holds[w.hold].hasChest) return w.hold;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<HoldChoice> ChooseHold(std::span<const HoldInfo> holds, std::span<const WorldHold> worlds,
+        std::uint32_t playerWorld, std::optional<Point> tamrielPos)
+    {
+        if (auto direct = DirectHoldForWorld(playerWorld, worlds, holds)) {
+            return HoldChoice{ *direct, HoldReason::kCapitalWorld };
+        }
+        if (!tamrielPos) return std::nullopt;
+        std::optional<std::size_t> best;
+        float bestD2 = 0.f;
+        for (std::size_t i = 0; i < holds.size(); ++i) {
+            if (!holds[i].hasChest) continue;
+            const float dx = holds[i].anchor.x - tamrielPos->x;
+            const float dy = holds[i].anchor.y - tamrielPos->y;
+            const float d2 = dx * dx + dy * dy;
+            if (!best || d2 < bestD2) {
+                best = i;
+                bestD2 = d2;
+            }
+        }
+        if (!best) return std::nullopt;
+        return HoldChoice{ *best, HoldReason::kNearest };
+    }
+
     std::string NoteText(std::string_view prisonName)
     {
         std::string out = "Your things are in ";

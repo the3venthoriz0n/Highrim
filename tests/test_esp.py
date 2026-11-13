@@ -31,6 +31,7 @@ EXPECTED_EDIDS = {
     "MGEF": [
         "HighrimFxRimerushSpeed", "HighrimFxRimerushStamina", "HighrimFxRimerushRegen",
         "HighrimFxVelvetResist", "HighrimFxVelvetSlow", "HighrimFxRegenDown",
+        "HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn", "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn",
         "HighrimAbRegenDown", "HighrimAbStaminaDown", "HighrimAbHealRateDown",
     ],
     "SPEL": [
@@ -294,6 +295,23 @@ class EspTests(unittest.TestCase):
             enit = alch.first("ENIT")
             self.assertEqual(len(enit), 20)
             self.assertTrue(alch.first("FULL").endswith(b"\0"))
+
+    def test_dreamcap_detect_life_effects_show_one_description(self):
+        dreamcap = self.edid["HighrimDreamcap"]
+        fxs = [self.edid[e] for e in ("HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn",
+                                      "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn")]
+        described = [f for f in fxs if f.get("DNAM")]
+        self.assertEqual(len(described), 1, "exactly one Detect Life effect carries description text")
+        self.assertTrue(described[0].first("DNAM").strip(bytes(1)))
+        for f in fxs:
+            self.assertEqual(struct.unpack_from("<I", f.first("DATA"), 64)[0], 19, "Detect Life archetype")
+            self.assertEqual(len(f.get("CTDA")), 6, "vanilla MGEF conditions kept")
+        # The potion uses our four copies once each (plus the sleeping tree effect), with the vanilla conditions.
+        efids = [struct.unpack("<I", raw)[0] for raw in dreamcap.get("EFID")]
+        self.assertEqual(efids[1:], [self.edid[e].formid for e in (
+            "HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn", "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn")])
+        self.assertEqual(len(set(efids)), len(efids), "no effect listed twice")
+        self.assertEqual(len(dreamcap.get("CTDA")), 4)
 
     def test_withdrawal_and_hangover_are_abilities_comedowns_are_spells(self):
         for edid in ("HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover"):

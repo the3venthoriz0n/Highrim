@@ -25,6 +25,10 @@ TEMPLATES = {
     0x0005AD5C: "Oakflesh (fire and forget self SPEL, for the SPIT layout)",
     0x000F431F: "RecipeFoodElsweyrFondue (cooking pot COBJ)",
     0x0008CDEC: "VendorItemPotion (KYWD)",
+    0x001019D8: "DetectLifeEnemyExteriorSelfFF (Detect Life MGEF)",
+    0x001019D9: "DetectLifeEnemyInteriorSelfFF (Detect Life MGEF)",
+    0x001019DA: "DetectLifeFriendExteriorSelfFF (Detect Life MGEF)",
+    0x001019DB: "DetectLifeFriendInteriorSelfFF (Detect Life MGEF)",
 }
 
 

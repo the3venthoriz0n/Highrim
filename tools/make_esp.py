@@ -11,6 +11,7 @@ Records, by fixed EDID (form IDs are assigned in this order from 0x800; the MCM 
   KYWD  HighrimDrug                                 keyword on all three drugs (for the later dealer feature)
   MGEF  HighrimFxRimerushSpeed / Stamina / Regen    Rimerush effects (clones of potion effects)
         HighrimFxVelvetResist / VelvetSlow          Velvet Haze effects
+        HighrimFxDetectEnemyOut / EnemyIn / FriendOut / FriendIn   Detect Life copies (description on one only)
         HighrimFxRegenDown                          stamina regen drain, shared by comedowns (potion clone)
         HighrimAbRegenDown / AbStaminaDown / AbHealRateDown   constant-effect clones for withdrawal/hangover
   SPEL  HighrimComedownRimerush / VelvetHaze / Dreamcap   60 s fire-and-forget spells the plugin casts at the end of a high
@@ -55,12 +56,16 @@ DRUGGED_EFFECT = 0x000E3CBB   # dunSleepingTreeDruggedAlch: the sleeping tree sa
 # and per-effect condition (CTDA, copied byte for byte from that scroll).
 CTDA_ENEMY = bytes.fromhex("2000000000000000cf02000000000000000000000000000000000000ffffffff")
 CTDA_FRIEND = bytes.fromhex("0000000000000000cf02000000000000000000000000000000000000ffffffff")
-DETECT_LIFE = [  # (effect, area in feet, condition)
-    (0x001019D8, 200, CTDA_ENEMY),
-    (0x001019D9, 100, CTDA_ENEMY),
-    (0x001019DA, 200, CTDA_FRIEND),
-    (0x001019DB, 100, CTDA_FRIEND),
+# Our own copies of the four vanilla MGEFs (see MGEFS): the vanilla Interior ones carry a description string
+# and the Exterior ones none, which made the potion tooltip repeat the text. Each copy keeps the vanilla
+# MGEF conditions (interior/exterior, not undead/daedra/construct) untouched.
+DETECT_LIFE = [  # (our MGEF EDID, area in feet, condition)
+    ("HighrimFxDetectEnemyOut", 200, CTDA_ENEMY),
+    ("HighrimFxDetectEnemyIn", 100, CTDA_ENEMY),
+    ("HighrimFxDetectFriendOut", 200, CTDA_FRIEND),
+    ("HighrimFxDetectFriendIn", 100, CTDA_FRIEND),
 ]
+DETECT_LIFE_TEXT = "Living creatures and people are visible through walls within <area> feet for <dur> seconds."
 
 # Template form IDs (see tools/extract_templates.py).
 T_FORT_STAMINA, T_FORT_STAMINA_RATE, T_SAP_SLOW, T_DMG_STAMINA_RATE = "0003EAF9", "0003EB08", "000E3CBA", "00073F2C"
@@ -83,6 +88,10 @@ MGEFS = [
     ("HighrimFxVelvetSlow", "Velvet Drag", "Movement is slowed by <mag>% for <dur> seconds.", T_SAP_SLOW, {}),
     ("HighrimFxRegenDown", "Slowed Recovery", "Stamina regenerates <mag>% slower for <dur> seconds.",
      T_DMG_STAMINA_RATE, {"drop": ["VMAD"]}),
+    ("HighrimFxDetectEnemyOut", "Detect Life", DETECT_LIFE_TEXT, "001019D8", {}),
+    ("HighrimFxDetectEnemyIn", "Detect Life", "", "001019D9", {"drop": ["DNAM"]}),
+    ("HighrimFxDetectFriendOut", "Detect Life", "", "001019DA", {"drop": ["DNAM"]}),
+    ("HighrimFxDetectFriendIn", "Detect Life", "", "001019DB", {"drop": ["DNAM"]}),
     ("HighrimAbRegenDown", "Cravings", "Stamina regenerates <mag>% slower.", T_AB_DMG_STAMINA_RATE, {}),
     ("HighrimAbStaminaDown", "Shakes", "Stamina is changed by <mag> points.", T_AB_FORT_STAMINA, {}),
     ("HighrimAbHealRateDown", "Slow Healing", "Health regenerates <mag>% slower.", T_AB_DMG_HEAL_RATE, {}),
@@ -127,7 +136,7 @@ def drug_defs():
          [effect(fx("HighrimFxVelvetResist"), 150, high), effect(fx("HighrimFxVelvetSlow"), 20, high)]),
         ("HighrimDreamcap", "Dreamcap", 70,
          [effect(DRUGGED_EFFECT, 0, high)]
-         + [effect(mgef, 0, high, area, [ctda]) for mgef, area, ctda in DETECT_LIFE]),
+         + [effect(fx(mgef), 0, high, area, [ctda]) for mgef, area, ctda in DETECT_LIFE]),
     ]
 
 
@@ -203,7 +212,8 @@ def build_mgef(edid, name, description, key, overrides):
     subs = template(key, "MGEF")
     replace(subs, "EDID", esp.zstr(edid))
     replace(subs, "FULL", esp.zstr(name))
-    replace(subs, "DNAM", esp.zstr(description))
+    if "DNAM" not in overrides.get("drop", []):
+        replace(subs, "DNAM", esp.zstr(description))
     drop(subs, *overrides.get("drop", []))
     data = dict(subs)["DATA"]
     if "assoc" in overrides:

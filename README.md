@@ -1,10 +1,106 @@
 # Highrim
 
-A Skyrim SE SKSE mod (version 0.1.0, work in progress): craftable cooking-pot drugs, addiction with withdrawal, and an overdose blackout that moves your gear to the hold's prison chest and wakes you elsewhere.
+A Skyrim SE SKSE mod (version 0.1.0): three craftable cooking-pot drugs, per-drug addiction with escalating withdrawal, and an overdose blackout. Take two doses back to back and you black out: your gear is moved to the nearest hold's prison chest and you wake up naked, with a note, at a distant map marker, six hours later, with a hangover.
 
-**Status: scaffold only.** This build contains the plugin skeleton, the MCM settings menu and the settings code. The drugs, addiction and blackout are not implemented yet, and nothing has been verified in game.
+**Status: v0.1.0, built and unit-tested, but never run in Skyrim.** See "Verified vs unverified" below before trusting any behaviour.
 
-Built with C++23, CommonLibSSE-NG v15.7.3 (git submodule) and vcpkg. Needs SKSE, Address Library and MCM Helper.
+## Requirements
+
+- Skyrim Special Edition (the game version CommonLibSSE-NG v15.7.3 targets) with SKSE64.
+- Address Library for SKSE Plugins (CommonLibSSE-NG resolves addresses through it).
+- SkyUI and MCM Helper for the settings menu (the mod works with the defaults without it).
+- `Highrim.esp` is a light (ESL) plugin and needs only Skyrim.esm.
+
+## Install
+
+Install `Highrim-0.1.0.zip` with a mod manager (it contains `Data/SKSE/Plugins/Highrim.dll`, `Data/Highrim.esp` and the MCM files under `Data/MCM`), enable `Highrim.esp`, and start the game. The log is `Documents\My Games\Skyrim Special Edition\SKSE\Highrim.log` and starts with `Highrim 0.1.0 loading`.
+
+## The drugs
+
+Craft them at a cooking pot.
+
+| Drug | Recipe | Effect for 120 s | Comedown (60 s) |
+|---|---|---|---|
+| Rimerush (stimulant) | 2 Giant Lichen + 1 Glowing Mushroom | Movement speed +25%, stamina +50, stamina regeneration +100% | Stamina regenerates 60% slower |
+| Velvet Haze (depressant) | 2 Lavender + 1 Hanging Moss | Armor rating +150, movement slowed 20% | Stamina regenerates 40% slower |
+| Dreamcap (hallucinogen) | 2 Glowing Mushroom + 1 Swamp Fungal Pod | Drugged visuals (the vanilla sleeping-tree sap effect) plus the four Detect Life effects of the vanilla Detect Life scroll (areas 200 and 100 ft, for enemies and for friends) | Drugged visuals again |
+
+The comedown is cast about 120 real seconds after a dose. Drinking another dose of the same drug before then restarts that timer, so only one comedown is cast.
+
+## Addiction and withdrawal (bAddiction)
+
+- Each drug has its own addiction level, 0 to 100. A dose adds 20 (capped at 100) after first decaying the level.
+- Levels decay by 10 per game day (floor 0).
+- Withdrawal tier, per drug, from its level and the time since its last dose: tier 0 if the level is under 10 or the last dose was under 6 game hours ago; otherwise tier 1 under 40, tier 2 under 70, tier 3 at 70 or more. The highest tier over the three drugs applies, and only one withdrawal ability is on the player at a time.
+- Tier 1 "Cravings": stamina regenerates 20% slower.
+- Tier 2 "Shakes": stamina regenerates 35% slower, stamina -25.
+- Tier 3 "Sickness": stamina regenerates 50% slower, stamina -40, health regenerates 50% slower.
+- At withdrawal tier 2 or higher, and while the hangover is active, an 8 second "Blurred Vision" pulse is cast every 60 to 180 real seconds. It is never cast in menus, dialogue, the console or during a blackout (a due pulse fires once the menu closes).
+- Levels are kept in the SKSE co-save. After loading, the withdrawal ability is re-applied once, never stacked.
+
+## Overdose blackout (bOverdose)
+
+Two doses of any drugs within `iDoseWindowMinutes` game minutes (default 30) are an overdose. About 1.5 real seconds after the second dose:
+
+1. Fade to black (1.5 s) and disable player controls.
+2. Pick the nearest hold prison (distance from you to each prison's exterior anchor).
+3. Use that prison's confiscation chest.
+4. Unequip everything, move every non-quest item (gold included) to the chest and verify the counts. A mismatch rolls back and aborts with your items untouched, plus a message box. Quest items stay on you.
+5. Pick a wake spot: a discovered map marker 8000 to 30000 units from that prison. This is chosen before anything moves; if none exists the blackout aborts with your items untouched.
+6. Teleport to that marker, give you a "Crumpled Note (Hold)" reading "Your things are in the Hold prison.", advance game time by 6 hours, and add the Hangover ability (stamina -30, stamina regenerates 25% slower) for 24 game hours.
+
+Then it holds black for 2 s and fades back in. (The log numbers the steps as above but runs step 5 before steps 3 and 4.) It does nothing if a blackout is already running, you are in combat or dialogue, controls are not available, or you are dead.
+
+Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail marker but no confiscation container), so it is never chosen as the nearest prison. The other eight holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale) are candidates.
+
+## MCM options (section General)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `bEnabled` | 1 | Whole mod on or off |
+| `bOverdose` | 1 | Two back-to-back doses cause the blackout |
+| `bAddiction` | 1 | Doses build addiction and withdrawal |
+| `iDoseWindowMinutes` | 30 | Game minutes between doses that count (slider 5 to 240, step 5) |
+| `bDebug` | 0 | Extra logging (for example `Dose: equip event` lines) |
+| `iDebugBlackoutKey` | 0 | DirectX scan code of a key that forces a blackout; 0 means none |
+
+## Skyrim Together
+
+All effects are local and nothing calls the server, so each player runs their own addiction, blackout and withdrawal. Whether the teleport, item transfer and fades behave under Skyrim Together has not been tested.
+
+## Verified vs unverified
+
+| Part | Status |
+|---|---|
+| Core logic (overdose window, addiction, decay, withdrawal tiers, serialisation, nearest hold, wake spot pick, timers) | Verified by unit tests (ctest) |
+| `Highrim.esp` structure (records re-parsed, vanilla IDs checked against Skyrim.esm) | Verified by `tests/test_esp.py` parsing only |
+| Release build and the packaged zip contents | Verified by building and listing the archive |
+| The plugin and ESP loading in Skyrim, the MCM menu | Unverified in game |
+| Drugs craftable and usable, effect magnitudes as listed, dose detection (`TESEquipEvent`) | Unverified in game |
+| Comedown and blur spells, withdrawal abilities applying and removing | Unverified in game |
+| Blackout: prison and chest discovery, item move, teleport, wake spot choice, 6 h skip, fades, hangover | Unverified in game |
+| Co-save of addiction and hangover | Unverified in game |
+| Skyrim Together compatibility | Unverified in game |
+| The GitHub release workflow | Not run yet |
+
+## First run checklist
+
+Open `Highrim.log` after the first launch and look for:
+
+1. `Highrim 0.1.0 loading` at startup.
+2. Between `Prison discovery: start` and `done`, one `Prison:` line for each of the nine holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale, Winterhold). Eight should show a chest (`chest[faction]` or `chest[fallback]`); Winterhold should show `chest[missing]`.
+3. After drinking a potion, a `Dose:` line, for example `Dose: Rimerush addiction 20.0/0.0/0.0 overdose=false ...`. No line means dose detection does not work.
+4. A second dose inside the window: `overdose=true`, then `Dose: overdose, starting the blackout`, then the `Blackout: step N` lines and `finished (success)`. Any `ABORT` or `MISMATCH` line explains a refused blackout.
+5. After waiting 6 game hours following a dose: `Withdrawal: tier 0 -> 1 (poll), AddSpell -> true` (and `Withdrawal: cast blur pulse` at tier 2 or higher).
+6. About 120 real seconds after a dose: `Comedown: cast ... comedown`.
+
+Please report which of these lines are missing or wrong.
+
+## Not in 0.1.0 (deferred)
+
+- A dealer who sells the drugs (the `HighrimDrug` keyword is already on all three for it), and fences who return gear.
+- A random location for the gear instead of the nearest prison.
+- A chance-based blackout (it is guaranteed on two doses inside the window for now).
 
 ## Build
 

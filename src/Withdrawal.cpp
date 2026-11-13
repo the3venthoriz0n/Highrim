@@ -131,24 +131,27 @@ namespace Highrim::Withdrawal
             }
 
             const auto settings = Config::Get();
+            int        tier     = 0;
             if (!settings.addiction || !settings.enabled) {
-                // Switched off: strip everything, once (g_applied 0 means nothing is applied).
+                // Switched off: strip the withdrawal abilities, once (g_applied 0 means nothing is applied).
                 if (g_applied != 0) {
                     spdlog::info("Withdrawal: addiction/mod off, removing abilities");
                     if (RemoveAll(player)) g_applied = 0;
                 }
-                g_blurDue.reset();
-                return;
+            } else {
+                const double hours = NowHours();
+                if (hours < 0.0) return;
+                tier = Core::HighestTier(State::Snapshot(), hours);
+                Apply(player, tier, "poll");
             }
 
-            const double hours = NowHours();
-            if (hours < 0.0) return;
-            const int tier = Core::HighestTier(State::Snapshot(), hours);
-            Apply(player, tier, "poll");
-
-            // Blur pulse: the hangover ability itself is owned by Blackout; we only look at it.
+            // Blur pulse: the hangover ability itself is owned by Blackout; we only look at it. The hangover belongs
+            // to the overdose feature, so it pulses even with addiction off (tier stays 0 then, so only the hangover
+            // makes it eligible). With the whole mod off nothing pulses.
             bool hangover = false;
-            if (auto* h = Lookup(Forms::HighrimHangover)) hangover = player->HasSpell(h);
+            if (settings.enabled) {
+                if (auto* h = Lookup(Forms::HighrimHangover)) hangover = player->HasSpell(h);
+            }
             static std::mt19937 rng{ std::random_device{}() };
             const double        r       = std::uniform_real_distribution<double>(0.0, 1.0)(rng);
             const bool          blocked = UiBlocksPulse() || Blackout::Busy() || player->IsDead();

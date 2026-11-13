@@ -35,7 +35,7 @@ The comedown is cast about 120 real seconds after a dose. Drinking another dose 
 - Tier 1 "Cravings": stamina regenerates 20% slower.
 - Tier 2 "Shakes": stamina regenerates 35% slower, stamina -25.
 - Tier 3 "Sickness": stamina regenerates 50% slower, stamina -40, health regenerates 50% slower.
-- At withdrawal tier 2 or higher, and while the hangover is active, an 8 second "Blurred Vision" pulse is cast every 60 to 180 real seconds. It is never cast in menus, dialogue, the console or during a blackout (a due pulse fires once the menu closes).
+- At withdrawal tier 2 or higher (needs bAddiction), and while the hangover is active (also with bAddiction off), an 8 second "Blurred Vision" pulse is cast every 60 to 180 real seconds. It is never cast in menus, dialogue, the console or during a blackout (a due pulse fires once the menu closes).
 - Levels are kept in the SKSE co-save. After loading, the withdrawal ability is re-applied once, never stacked.
 
 ## Overdose blackout (bOverdose)

@@ -341,9 +341,7 @@ class EspTests(unittest.TestCase):
     def test_committed_files_are_current(self):
         self.assertEqual(read_bytes(COMMITTED_ESP), self.bytes, "package/Data/Highrim.esp is stale: run tools/make_esp.py")
         # Git may check the header out with CRLF line endings; compare ignoring that.
-        self.assertEqual(read_bytes(COMMITTED_HEADER).replace(b"
-", b"
-"), read_bytes(self.hdr),
+        self.assertEqual(read_bytes(COMMITTED_HEADER).replace(b"\r\n", b"\n"), read_bytes(self.hdr),
                          "src/Forms.h is stale: run tools/make_esp.py")
 
     def test_forms_header_matches_the_plugin(self):

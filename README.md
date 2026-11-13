@@ -1,6 +1,6 @@
 # Highrim
 
-A Skyrim SE SKSE mod (version 0.1.0): three craftable cooking-pot drugs, per-drug addiction with escalating withdrawal, and an overdose blackout. Take two doses back to back and you black out: your gear is moved to the nearest hold's prison chest and you wake up naked, with a note, at a distant map marker, six hours later, with a hangover.
+A Skyrim SE SKSE mod (version 0.1.0): three craftable cooking-pot drugs, per-drug addiction with escalating withdrawal, and an overdose blackout. Keep taking the same drug and its effects stack, until you black out: your gear is moved to the nearest hold's prison chest and you wake up naked, with a note, at a distant map marker, six hours later, with a hangover.
 
 **Status: v0.1.0, built and unit-tested, but never run in Skyrim.** See "Verified vs unverified" below before trusting any behaviour.
 
@@ -21,9 +21,11 @@ Craft them at a cooking pot.
 
 | Drug | Recipe | Effect for 120 s | Comedown (60 s) |
 |---|---|---|---|
-| Rimerush (stimulant) | 2 Giant Lichen + 1 Glowing Mushroom | Movement speed +25%, stamina +50, stamina regeneration +100% | Stamina regenerates 60% slower |
-| Velvet Haze (depressant) | 2 Lavender + 1 Hanging Moss | Armor rating +150, movement slowed 20% | Stamina regenerates 40% slower |
+| Rimerush (stimulant) | 2 Giant Lichen + 1 Glowing Mushroom | Movement speed +34%, stamina +68, stamina regeneration +135% | Stamina regenerates 60% slower |
+| Velvet Haze (depressant) | 2 Lavender + 1 Hanging Moss | Armor rating +200, movement slowed 27% | Stamina regenerates 40% slower |
 | Dreamcap (hallucinogen) | 2 Glowing Mushroom + 1 Swamp Fungal Pod | Drugged visuals (the vanilla sleeping-tree sap effect) plus the four Detect Life effects of the vanilla Detect Life scroll (areas 200 and 100 ft, for enemies and for friends) | Drugged visuals again |
+
+Magnitudes are about 35% above the first version (Rimerush was 25 / 50 / 100, Velvet Haze 150 / 20); they live in `tools/make_esp.py`.
 
 The comedown is cast about 120 real seconds after a dose. Drinking another dose of the same drug before then restarts that timer, so only one comedown is cast.
 
@@ -38,9 +40,28 @@ The comedown is cast about 120 real seconds after a dose. Drinking another dose 
 - At withdrawal tier 2 or higher (needs bAddiction), and while the hangover is active (also with bAddiction off), an 8 second "Blurred Vision" pulse is cast every 60 to 180 real seconds. It is never cast in menus, dialogue, the console or during a blackout (a due pulse fires once the menu closes).
 - Levels are kept in the SKSE co-save. After loading, the withdrawal ability is re-applied once, never stacked.
 
-## Overdose blackout (bOverdose)
+## Stacking doses and screen effects
 
-Two doses of any drugs within `iDoseWindowMinutes` game minutes (default 30) are an overdose. About 1.5 real seconds after the second dose:
+Each drug has its own stack. A dose of a drug inside `iDoseWindowMinutes` game minutes (default 30) of the previous dose of the same drug adds one to that drug's stack; a dose after the window restarts it at 1. Doses of other drugs do not touch it. Stacks are kept in memory only (they reset on load, new game and blackout).
+
+- **Stronger effects.** From stack 2 the plugin adds an ability for that drug and level (stack 2, 3, 4 and up = level 1, 2, 3) on top of the potion's own effects. Only one stack ability per drug is on the player; the previous level is removed first. All of a drug's stack abilities are removed when its high ends (the comedown moment, about 120 real seconds after its last dose), on load, new game and when a blackout starts, and none are added once a blackout is on its way.
+
+| Drug | Level 1 / 2 / 3 extra effects (strictly stronger each level) |
+|---|---|
+| Rimerush Surge I / II / III | Movement speed +10 / 20 / 30%, stamina +25 / 50 / 75, stamina regeneration +50 / 100 / 150% |
+| Velvet Haze Weight I / II / III | Armor rating +50 / 100 / 150, movement slowed 8 / 16 / 24% |
+| Dreamcap Daze I / II / III | Movement slowed 5 / 10 / 15%, stamina regenerates 15 / 30 / 45% slower (Dreamcap has no stat effect of its own, so its stack is a clumsy trip; my call) |
+
+- **Screen effects.** On every dose, and again about every 10 real seconds while the high lasts, the plugin triggers a vanilla image space modifier for the drug type, at strength 0.6 at stack 1 rising in equal steps to 1.0 at stack 4 and above. Picked by editor ID from `Skyrim.esm`, not from looking at them:
+  - Stimulant: `QuickReflexesImod` (0010C761), an adrenaline look. Other candidates: `BerserkerMainImod` (red, probably too aggressive), `NightEyeImod`, `MAGShoutSprint03`.
+  - Depressant: `ParalyzeMassImod` (00031060), heavy blur and drained colour. Other candidates: `defaultDesaturateImod`, `PoisonHitImod`, `CGDragonBlurImod`.
+  - Hallucinogen: `DA13PeryiteVisionImod` (000C1966), strong tinted vision. Other candidates: `DA16DreamState`, `dunSleepingTreeCampISMD` (the existing trip, judged not intense enough), `WerewolfVisionImod`.
+
+  If a pick looks wrong in game it is one constant in `tools/make_esp.py` (the three IDs are written to `src/Forms.h`).
+
+## Overdose blackout (bOverdose, iBlackoutDoses)
+
+When one drug's stack reaches `iBlackoutDoses` (default 4, 2 to 8) the dose is an overdose. Mixing different drugs no longer causes a blackout. `bOverdose` switches blackouts off. About 1.5 real seconds after that dose:
 
 1. Fade to black (1.5 s) and disable player controls.
 2. Pick the hold: if you are in a hold capital's own worldspace (Windhelm, Whiterun, Solitude, Markarth, Riften, including their interiors) that hold's prison; otherwise the hold whose prison is nearest to you in Tamriel coordinates. Inside an interior the position comes from the nearest door chain out to an exterior; inside any other child worldspace (caves, ruins) it is the Tamriel position of that worldspace's entrance. The prison positions, the capital worldspaces and the entrances are not read from the running game (cells are often not loaded) but from a table generated out of `Skyrim.esm` (`src/GameData.h`, see below). Each decision is logged: where you were, every candidate with its distance, and which one was chosen and why.
@@ -49,7 +70,7 @@ Two doses of any drugs within `iDoseWindowMinutes` game minutes (default 30) are
 5. Pick a wake spot: any map marker of Tamriel (all of them, not just the ones you have discovered; the list comes from `Skyrim.esm` plus whatever the game lists in Tamriel's persistent cell, so markers added by other mods count when readable). It is chosen at random from the first band that has candidates, measured from the prison: 15000 to 80000 units, else 8000 to 150000, else 3000 and up; markers closer than 3000 are never used. The log names the band ("stage"), the marker, its position and its distance. This is chosen before anything moves; if there is no marker in any band the blackout aborts with your items untouched. (Rough scale, an estimate: 15000 units is about 200 m and takes under a minute to run, 80000 units a few minutes; the later bands can mean longer.)
 6. Teleport to that marker, give you a "Crumpled Note (Hold)" reading "Your things are in the Hold prison.", advance game time by 6 hours, and add the Hangover ability (stamina -30, stamina regenerates 25% slower) for 24 game hours.
 
-Then it holds black for 2 s and fades back in. (The log numbers the steps as above but runs step 5 before steps 3 and 4.) It does nothing if a blackout is already running, you are in combat or dialogue, controls are not available, you are dead, or the game is paused or any menu is open. An overdose triggered while a menu is open (for example the second dose from the inventory) waits until the menus close and is dropped (`overdose dropped` in the log) after 30 real seconds of waiting. Just before it moves any item and again before the teleport, the blackout re-checks that you are alive, loaded in, and that no load, new game, revert or death happened since it started; if something changed it aborts (putting back anything already moved). A load or new game also clears a running blackout and pending overdose and comedown timers. Non-playable items (other mods' tokens, summoned bound weapons) stay on you and are logged as skipped. Starting a blackout cancels a pending comedown.
+Then it holds black for 2 s and fades back in. (The log numbers the steps as above but runs step 5 before steps 3 and 4.) It does nothing if a blackout is already running, you are in combat or dialogue, controls are not available, you are dead, or the game is paused or any menu is open. An overdose triggered while a menu is open (for example the last dose from the inventory) waits until the menus close and is dropped (`overdose dropped` in the log) after 30 real seconds of waiting. Just before it moves any item and again before the teleport, the blackout re-checks that you are alive, loaded in, and that no load, new game, revert or death happened since it started; if something changed it aborts (putting back anything already moved). A load or new game also clears a running blackout and pending overdose and comedown timers. Non-playable items (other mods' tokens, summoned bound weapons) stay on you and are logged as skipped. Starting a blackout cancels a pending comedown, clears the stacks and removes the stack abilities.
 
 Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail marker but no confiscation container), so it is never chosen. The other eight holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale) are always candidates: all of them have an anchor in the generated table.
 
@@ -60,9 +81,10 @@ Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail 
 | Key | Default | Meaning |
 |---|---|---|
 | `bEnabled` | 1 | Whole mod on or off |
-| `bOverdose` | 1 | Two back-to-back doses cause the blackout |
+| `bOverdose` | 1 | Reaching the blackout dose count causes the blackout |
 | `bAddiction` | 1 | Doses build addiction and withdrawal |
-| `iDoseWindowMinutes` | 30 | Game minutes between doses that count (slider 5 to 240, step 5) |
+| `iDoseWindowMinutes` | 30 | Game minutes between doses of the same drug that stack (slider 5 to 240, step 5) |
+| `iBlackoutDoses` | 4 | Same-drug doses in the window that cause a blackout (slider 2 to 8, step 1) |
 | `bDebug` | 0 | Extra logging (for example `Dose: equip event` lines) |
 | `iDebugBlackoutKey` | 0 | DirectX scan code of a key that forces a blackout; 0 means none |
 
@@ -74,13 +96,15 @@ All effects are local and nothing calls the server, so each player runs their ow
 
 | Part | Status |
 |---|---|
-| Core logic (overdose window, addiction, decay, withdrawal tiers, serialisation, hold choice, staged wake spot pick, timers) | Verified by unit tests (ctest) |
+| Core logic (dose stacks, blackout dose count, stack level and screen strength, addiction, decay, withdrawal tiers, serialisation, hold choice, staged wake spot pick, timers) | Verified by unit tests (ctest) |
 | `src/GameData.h` (prison anchors, worldspace entrances, Tamriel markers) | Verified equal to what the generator reads from `Skyrim.esm` (`tests/test_game_data.py`); the numbers are vanilla data, not checked against the game running |
 | `Highrim.esp` structure (records re-parsed, vanilla IDs checked against Skyrim.esm) | Verified by `tests/test_esp.py` parsing only |
 | Release build and the packaged zip contents | Verified by building and listing the archive |
 | The plugin and ESP loading in Skyrim, the MCM menu | Unverified in game |
 | Drugs craftable and usable, effect magnitudes as listed, dose detection (`TESEquipEvent`) | Unverified in game |
 | Comedown and blur spells, withdrawal abilities applying and removing | Unverified in game |
+| Stack abilities applying, stepping up and being removed; the raised base magnitudes | Unverified in game |
+| The three screen effects (picked by editor ID only): that they look intense, trigger through `ImageSpaceModifierInstanceForm::Trigger` at the given strength and re-trigger every 10 s | Unverified in game |
 | Blackout: prison and chest discovery, item move, teleport, wake spot choice, 6 h skip, fades, hangover | Unverified in game |
 | Co-save of addiction and hangover | Unverified in game |
 | Skyrim Together compatibility | Unverified in game |
@@ -92,8 +116,8 @@ Open `Highrim.log` after the first launch and look for:
 
 1. `Highrim 0.1.0 loading` at startup.
 2. Between `Prison discovery: start` and `done`, one `Prison:` line for each of the nine holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale, Winterhold). Eight should show a chest (`chest[faction]` or `chest[fallback]`); Winterhold should show `chest[missing]`.
-3. After drinking a potion, a `Dose:` line, for example `Dose: Rimerush addiction 20.0/0.0/0.0 overdose=false ...`. No line means dose detection does not work.
-4. A second dose inside the window: `overdose=true`, then `Dose: overdose, starting the blackout`, then the `Blackout: step N` lines and `finished (success)`. Any `ABORT` or `MISMATCH` line explains a refused blackout.
+3. After drinking a potion, a `Dose:` line, for example `Dose: Rimerush stack 1/4 level 0 strength 0.60`. No line means dose detection does not work.
+4. The same drug again inside the window: `stack 2/4 level 1 ...` and `Stack: Rimerush level 1 ability, AddSpell -> true`; at the fourth dose `blackout=true`, then `Dose: overdose, starting the blackout`, then the `Blackout: step N` lines and `finished (success)`. Any `ABORT` or `MISMATCH` line explains a refused blackout.
 5. After waiting 6 game hours following a dose: `Withdrawal: tier 0 -> 1 (poll), AddSpell -> true` (and `Withdrawal: cast blur pulse` at tier 2 or higher).
 6. About 120 real seconds after a dose: `Comedown: cast ... comedown`.
 
@@ -103,7 +127,7 @@ Please report which of these lines are missing or wrong.
 
 - A dealer who sells the drugs (the `HighrimDrug` keyword is already on all three for it), and fences who return gear.
 - A random location for the gear instead of the nearest prison.
-- A chance-based blackout (it is guaranteed on two doses inside the window for now).
+- A chance-based blackout (it is guaranteed at the blackout dose count for now).
 
 ## Build
 
@@ -158,9 +182,10 @@ Known unverified points: whether the crime faction exposes its chest and jail ma
 
 Nothing below has been run in Skyrim yet. Drink the potions from the inventory (not `additem` alone: only a real equip/consume counts). Set `bDebug` for extra `Dose: equip event` lines.
 
-- One dose: `Dose: Rimerush addiction 20.0/0.0/0.0 overdose=false (game hour ...)`. About 120 real seconds later: `Comedown: cast Rimerush comedown`. Drinking another dose before then restarts that timer (only one cast).
-- Two doses inside the window (default 30 game minutes, any two drugs): the second logs `overdose=true`, then about 1.5 s later `Dose: overdose, starting the blackout` and the `Blackout:` lines above.
-- With `bAddiction` off the levels stay `0.0` but `overdose=` still works; with `bOverdose` off `overdose=true` is logged but no blackout starts.
+- One dose: `Dose: Rimerush stack 1/4 level 0 strength 0.60`, then `Dose: Rimerush addiction 20.0/0.0/0.0 blackout=false (game hour ...)`. About 120 real seconds later: `Comedown: cast Rimerush comedown`. Drinking another dose before then restarts that timer (only one cast).
+- The same drug again inside the window (default 30 game minutes): `stack 2/4 level 1 strength 0.73`, the `Stack: ... AddSpell` line (the previous level is removed first), and with `bDebug` a `Visual:` line about every 10 s while the high lasts. Other drugs keep their own stacks. At the dose that reaches `iBlackoutDoses` the log says `blackout=true`, then about 1.5 s later `Dose: overdose, starting the blackout` and the `Blackout:` lines above.
+- About 120 s after the last dose of a drug its `Stack: removed ... ability` lines appear. A save load or new game removes all stack abilities and resets the stacks.
+- With `bAddiction` off the levels stay `0.0` but stacking and blackout still work; with `bOverdose` off `blackout=false` is always logged and no blackout starts.
 - Save and reload: `State: saved (N bytes), hangover expiry ...` on save, `State: loaded, levels ...` on load. A damaged record logs `State: corrupt record, reset to zero`. After a blackout, reload within 24 game hours: `State: hangover restored ...` (or `already on the player`).
 - Loading a save or starting a new game cancels pending comedowns.
 

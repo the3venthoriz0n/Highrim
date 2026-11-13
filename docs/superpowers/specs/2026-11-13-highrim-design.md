@@ -8,7 +8,7 @@ Built for the owner's Skyrim Together Reborn (STR) sessions. Everything below is
 - Made at the **cooking pot**, as new items from scratch (not built on Synthetic Drugs of Skyrim). Decided 2026-11-13: the alchemy lab mixes ingredients' own effects and has no recipes, so recipes (COBJ with the CraftingCookpot keyword) are used instead.
 - **Addiction:** using a drug builds dependency. Withdrawal debuffs get stronger as dependency grows.
   Start with: cravings, shakes, slower stamina recovery. Tune later.
-- **Overdose blackout:** taking two doses back to back (testing rule) always causes a blackout.
+- **Overdose blackout:** each drug has its own dose stack (a dose within the window of the previous dose of the same drug adds one; later restarts at 1). Effects stack with it, and when a drug's stack reaches the blackout dose count (default 4, setting `iBlackoutDoses`, 2 to 8) the player blacks out. Mixing different drugs does not.
   The player passes out and wakes up:
   - naked, carrying only a **note** that names where their gear is;
   - somewhere random at a **map marker far from the gear** (my call: 15000 to 80000 game units from the prison, which should be a few minutes on foot at most; if no marker is in that band the band widens in two steps, 8000 to 150000 and then anything from 3000 up, so the walk back is not always short);
@@ -30,7 +30,7 @@ Built for the owner's Skyrim Together Reborn (STR) sessions. Everything below is
 - Anything that needs the owner's friends to see our effects: screen effects stay local.
 
 ## Settings (MCM, short texts that fit on screen)
-Back-to-back window (game minutes), enable overdose blackout, enable addiction, debug logging.
+Back-to-back window (game minutes), doses to blackout, enable overdose blackout, enable addiction, debug logging.
 
 ## Skyrim Together notes
 - Magic effects, addiction and hangover run on the local client; other players do not see screen effects.

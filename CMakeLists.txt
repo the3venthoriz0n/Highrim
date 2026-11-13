@@ -20,6 +20,8 @@ set(PROJECT_SOURCES
     src/main.cpp
     src/Config.h
     src/Config.cpp
+    src/Core.h
+    src/Core.cpp
 )
 
 add_commonlibsse_plugin(${PROJECT_NAME}
@@ -61,7 +63,7 @@ endif()
 
 # Unit tests: pure logic only (no game headers, no PCH).
 enable_testing()
-add_executable(HighrimTests tests/test_main.cpp src/Config.cpp)
+add_executable(HighrimTests tests/test_main.cpp src/Config.cpp src/Core.cpp)
 target_include_directories(HighrimTests PRIVATE src)
 target_compile_definitions(HighrimTests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_test(NAME HighrimTests COMMAND HighrimTests)

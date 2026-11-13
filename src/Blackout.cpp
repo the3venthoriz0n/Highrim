@@ -4,6 +4,7 @@
 
 #include "Config.h"
 #include "Core.h"
+#include "Doses.h"
 #include "Forms.h"
 #include "Prison.h"
 
@@ -414,6 +415,7 @@ namespace Highrim::Blackout
             PollHotkey();
             Tick();
             TickHangover();
+            Doses::Tick();
         }
 
         void PollerLoop()

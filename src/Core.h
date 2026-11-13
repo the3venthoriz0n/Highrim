@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -29,6 +31,29 @@ namespace Highrim::Core
 
     std::string              Serialize(const Addiction& a);
     std::optional<Addiction> Deserialize(std::string_view text);
+
+
+    // Maps the local form id of one of the three drugs to its type; anything else -> nullopt.
+    std::optional<DrugType> DrugFromLocalId(std::uint32_t localId);
+
+    // What the co-save keeps: addiction state plus the game hour at which the hangover ends (0 = none).
+    struct PersistedState
+    {
+        Addiction addiction;
+        double    hangoverExpiryHours{ 0 };
+    };
+    std::string                   SerializeState(const PersistedState& s);
+    std::optional<PersistedState> DeserializeState(std::string_view text);  // strict; malformed -> nullopt
+
+    // Comedown scheduling in real seconds: due kComedownDelaySeconds after the drug's last dose.
+    inline constexpr double kComedownDelaySeconds = 120.0;
+    struct ComedownTimers
+    {
+        std::array<std::optional<double>, 3> dueSeconds{};
+    };
+    void                    OnComedownDose(ComedownTimers& t, DrugType type, double nowSeconds);  // starts or restarts
+    std::optional<DrugType> TakeDueComedown(ComedownTimers& t, double nowSeconds);  // returns one due drug and clears it
+    void                    CancelComedowns(ComedownTimers& t);
 
     struct Point { float x, y; };
 

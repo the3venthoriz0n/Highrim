@@ -1,4 +1,5 @@
 #include "Core.h"
+#include "Forms.h"
 
 #include <algorithm>
 #include <charconv>
@@ -123,6 +124,61 @@ namespace Highrim::Core
         }
         if (!ParseNumber(tokens[7], a.lastUpdateHours)) return std::nullopt;
         return a;
+    }
+
+    std::optional<DrugType> DrugFromLocalId(std::uint32_t localId)
+    {
+        if (localId == Forms::HighrimRimerush) return DrugType::kStimulant;
+        if (localId == Forms::HighrimVelvetHaze) return DrugType::kDepressant;
+        if (localId == Forms::HighrimDreamcap) return DrugType::kHallucinogen;
+        return std::nullopt;
+    }
+
+    std::string SerializeState(const PersistedState& s)
+    {
+        std::string out = "HS1|" + Serialize(s.addiction) + "|";
+        Append(out, s.hangoverExpiryHours);
+        return out;
+    }
+
+    std::optional<PersistedState> DeserializeState(std::string_view text)
+    {
+        constexpr std::string_view kTag = "HS1|";
+        if (!text.starts_with(kTag)) return std::nullopt;
+        text.remove_prefix(kTag.size());
+        const auto sep = text.find('|');
+        if (sep == std::string_view::npos) return std::nullopt;
+        auto addiction = Deserialize(text.substr(0, sep));
+        if (!addiction) return std::nullopt;
+        PersistedState p{};
+        p.addiction = *addiction;
+        if (!ParseNumber(text.substr(sep + 1), p.hangoverExpiryHours)) return std::nullopt;
+        if (p.hangoverExpiryHours < 0.0) return std::nullopt;
+        return p;
+    }
+
+    void OnComedownDose(ComedownTimers& t, DrugType type, double nowSeconds)
+    {
+        const auto i = static_cast<std::size_t>(type);
+        if (i >= 3 || !std::isfinite(nowSeconds)) return;
+        t.dueSeconds[i] = nowSeconds + kComedownDelaySeconds;
+    }
+
+    std::optional<DrugType> TakeDueComedown(ComedownTimers& t, double nowSeconds)
+    {
+        if (!std::isfinite(nowSeconds)) return std::nullopt;
+        for (std::size_t i = 0; i < 3; ++i) {
+            if (t.dueSeconds[i] && nowSeconds >= *t.dueSeconds[i]) {
+                t.dueSeconds[i].reset();
+                return static_cast<DrugType>(i);
+            }
+        }
+        return std::nullopt;
+    }
+
+    void CancelComedowns(ComedownTimers& t)
+    {
+        for (auto& d : t.dueSeconds) d.reset();
     }
 
     std::optional<std::size_t> NearestIndex(Point origin, std::span<const Point> points)

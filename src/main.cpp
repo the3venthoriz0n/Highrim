@@ -2,6 +2,8 @@
 
 #include "Config.h"
 #include "Blackout.h"
+#include "Doses.h"
+#include "State.h"
 #include "Prison.h"
 
 namespace
@@ -25,6 +27,10 @@ namespace
 
     void OnSKSEMessage(SKSE::MessagingInterface::Message* a_message)
     {
+        if (a_message && (a_message->type == SKSE::MessagingInterface::kPostLoadGame ||
+                          a_message->type == SKSE::MessagingInterface::kNewGame)) {
+            Highrim::State::OnGameLoaded();
+        }
         if (a_message && a_message->type == SKSE::MessagingInterface::kDataLoaded) {
             spdlog::info("Data loaded");
             Highrim::Config::Load();
@@ -35,6 +41,7 @@ namespace
             }
             Highrim::Prison::Discover();
             Highrim::Blackout::Install();
+            Highrim::Doses::Install();
             spdlog::info("Settings: enabled={} overdose={} addiction={} doseWindowMinutes={} debug={} debugBlackoutKey={}",
                 settings.enabled, settings.overdose, settings.addiction, settings.doseWindowMinutes,
                 settings.debug, settings.debugBlackoutKey);
@@ -54,6 +61,8 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
         spdlog::set_level(spdlog::level::debug);
         spdlog::default_logger()->set_level(spdlog::level::debug);
     }
+
+    Highrim::State::Register();
 
     auto* messaging = SKSE::GetMessagingInterface();
     if (!messaging || !messaging->RegisterListener(OnSKSEMessage)) {

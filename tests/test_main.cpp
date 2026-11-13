@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "Core.h"
+#include "Forms.h"
 
 #include <cmath>
 #include <cstdio>
@@ -183,6 +184,58 @@ namespace
             // none in band
             CHECK(!PickWakeSpot(c, { 0, 0 }, 20.f, 30.f, 0.5f).has_value());
             CHECK(!PickWakeSpot(c, { 0, 0 }, 6.f, 9.f, 0.5f).has_value());
+        }
+
+        // Drug id mapping.
+        CHECK(DrugFromLocalId(Highrim::Forms::HighrimRimerush) == std::optional<DrugType>(DrugType::kStimulant));
+        CHECK(DrugFromLocalId(Highrim::Forms::HighrimVelvetHaze) == std::optional<DrugType>(DrugType::kDepressant));
+        CHECK(DrugFromLocalId(Highrim::Forms::HighrimDreamcap) == std::optional<DrugType>(DrugType::kHallucinogen));
+        CHECK(!DrugFromLocalId(Highrim::Forms::HighrimDrug).has_value());
+        CHECK(!DrugFromLocalId(0).has_value());
+
+        // Persisted state (addiction + hangover expiry).
+        {
+            PersistedState p{};
+            p.addiction.level[1] = 42.5f; p.addiction.lastDoseHours[1] = 123.456; p.addiction.lastUpdateHours = 124.0;
+            p.hangoverExpiryHours = 987.654321;
+            const std::string t = SerializeState(p);
+            auto q = DeserializeState(t);
+            CHECK(q.has_value());
+            CHECK(q->hangoverExpiryHours == p.hangoverExpiryHours);
+            CHECK(Serialize(q->addiction) == Serialize(p.addiction));
+            CHECK(SerializeState(*q) == t);
+            CHECK(!DeserializeState("").has_value());
+            CHECK(!DeserializeState("HS1").has_value());
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1").has_value());
+            CHECK(!DeserializeState("HS1|garbage|1").has_value());
+            CHECK(!DeserializeState("HS1|" + Serialize(p.addiction)).has_value());
+            CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|").has_value());
+            CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|-1").has_value());
+            CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|nan").has_value());
+            CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|1|2").has_value());
+        }
+
+        // Comedown timers: due 120 s after a dose; a new dose restarts; cancel clears; never fires twice.
+        {
+            ComedownTimers t{};
+            CHECK(!TakeDueComedown(t, 1000.0).has_value());
+            OnComedownDose(t, DrugType::kStimulant, 100.0);
+            CHECK(!TakeDueComedown(t, 219.9).has_value());
+            OnComedownDose(t, DrugType::kStimulant, 200.0);              // restart
+            CHECK(!TakeDueComedown(t, 319.9).has_value());
+            CHECK(TakeDueComedown(t, 320.0) == std::optional<DrugType>(DrugType::kStimulant));
+            CHECK(!TakeDueComedown(t, 400.0).has_value());               // consumed once
+            OnComedownDose(t, DrugType::kDepressant, 0.0);
+            OnComedownDose(t, DrugType::kHallucinogen, 10.0);
+            CancelComedowns(t);
+            CHECK(!TakeDueComedown(t, 10000.0).has_value());
+            OnComedownDose(t, DrugType::kDepressant, 0.0);
+            OnComedownDose(t, DrugType::kHallucinogen, 10.0);
+            CHECK(TakeDueComedown(t, 500.0) == std::optional<DrugType>(DrugType::kDepressant));
+            CHECK(TakeDueComedown(t, 500.0) == std::optional<DrugType>(DrugType::kHallucinogen));
+            CHECK(!TakeDueComedown(t, 500.0).has_value());
+            OnComedownDose(t, DrugType::kStimulant, std::numeric_limits<double>::quiet_NaN());  // ignored
+            CHECK(!TakeDueComedown(t, 1e9).has_value());
         }
 
         CHECK(NoteText("Dawnstar Sanctuary") == "Your things are in Dawnstar Sanctuary.");

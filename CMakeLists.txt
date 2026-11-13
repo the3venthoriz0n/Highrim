@@ -26,6 +26,10 @@ set(PROJECT_SOURCES
     src/Prison.cpp
     src/Blackout.h
     src/Blackout.cpp
+    src/Doses.h
+    src/Doses.cpp
+    src/State.h
+    src/State.cpp
 )
 
 add_commonlibsse_plugin(${PROJECT_NAME}

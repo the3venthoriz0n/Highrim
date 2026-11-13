@@ -41,6 +41,18 @@ Then walk to the chosen hold's prison and open the chest named in `step 3`; your
 
 Known unverified points: whether the crime faction exposes its chest and jail marker at runtime (discovery logs it, a Skyrim.esm id table is the fallback), the exterior-position search through doors, the map-marker "visible" flag as "discovered", `MoveTo` onto a marker, advancing game time by editing the calendar globals, and the fade image-space modifiers.
 
+## Test it (doses, overdose, addiction, UNVERIFIED in game)
+
+Nothing below has been run in Skyrim yet. Drink the potions from the inventory (not `additem` alone: only a real equip/consume counts). Set `bDebug` for extra `Dose: equip event` lines.
+
+- One dose: `Dose: Rimerush addiction 20.0/0.0/0.0 overdose=false (game hour ...)`. About 120 real seconds later: `Comedown: cast Rimerush comedown`. Drinking another dose before then restarts that timer (only one cast).
+- Two doses inside the window (default 30 game minutes, any two drugs): the second logs `overdose=true`, then about 1.5 s later `Dose: overdose, starting the blackout` and the `Blackout:` lines above.
+- With `bAddiction` off the levels stay `0.0` but `overdose=` still works; with `bOverdose` off `overdose=true` is logged but no blackout starts.
+- Save and reload: `State: saved (N bytes), hangover expiry ...` on save, `State: loaded, levels ...` on load. A damaged record logs `State: corrupt record, reset to zero`. After a blackout, reload within 24 game hours: `State: hangover restored ...` (or `already on the player`).
+- Loading a save or starting a new game cancels pending comedowns.
+
+Unverified: that `TESEquipEvent` fires with `equipped=true` for the player when a potion is drunk (and not for other equips of these forms), that the instant-cast comedown spell applies, and the co-save round trip inside the game.
+
 ## License
 
 CommonLibSSE-NG is GPL-3.0-or-later and is linked into the plugin, so Highrim is GPL too (see COPYING).

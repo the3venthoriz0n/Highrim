@@ -33,3 +33,5 @@ Thumbs.db
 # Build outputs
 dist/
 package/Data/SKSE/Plugins/SleepTogether.dll
+
+.superpowers/

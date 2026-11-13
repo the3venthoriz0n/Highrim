@@ -73,6 +73,12 @@ namespace Highrim::Core
     inline constexpr double kBlurMaxSeconds = 180.0;
     bool TickBlurPulse(std::optional<double>& nextDue, double nowSeconds, int tier, bool hangover, double rng01);
 
+    // Overdose deferral: a due overdose waits while a menu is open or the game is paused, and is dropped after
+    // kOverdoseGiveUpSeconds of real time of waiting (counted from the due time). Non-finite times drop it.
+    inline constexpr double kOverdoseGiveUpSeconds = 30.0;
+    enum class OverdoseAction { kWait, kRun, kDrop };
+    OverdoseAction DecideOverdose(double nowSeconds, double dueSeconds, bool uiBlocked);
+
     struct Point { float x, y; };
 
     std::optional<std::size_t> NearestIndex(Point origin, std::span<const Point> points);

@@ -181,6 +181,14 @@ namespace Highrim::Core
         for (auto& d : t.dueSeconds) d.reset();
     }
 
+    OverdoseAction DecideOverdose(double nowSeconds, double dueSeconds, bool uiBlocked)
+    {
+        if (!std::isfinite(nowSeconds) || !std::isfinite(dueSeconds)) return OverdoseAction::kDrop;
+        if (nowSeconds < dueSeconds) return OverdoseAction::kWait;
+        if (!uiBlocked) return OverdoseAction::kRun;
+        return nowSeconds - dueSeconds >= kOverdoseGiveUpSeconds ? OverdoseAction::kDrop : OverdoseAction::kWait;
+    }
+
     std::uint32_t WorldRoot(std::uint32_t world, const WorldParents& parents)
     {
         std::uint32_t cur = world;

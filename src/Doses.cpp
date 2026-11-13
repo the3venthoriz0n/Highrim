@@ -159,12 +159,24 @@ namespace Highrim::Doses
     {
         bool                        runOverdose = false;
         std::vector<Core::DrugType> due;
+        const bool                  uiBlocked = Blackout::MenuOrPauseActive();
         {
             std::lock_guard lock(g_mutex);
             const double    now = RealSeconds();
-            if (g_overdoseDue && now >= *g_overdoseDue) {
-                g_overdoseDue.reset();
-                runOverdose = true;
+            if (g_overdoseDue) {
+                // Wait (poll) while a menu is open or the game is paused, e.g. the second dose came from the inventory.
+                switch (Core::DecideOverdose(now, *g_overdoseDue, uiBlocked)) {
+                case Core::OverdoseAction::kRun:
+                    g_overdoseDue.reset();
+                    runOverdose = true;
+                    break;
+                case Core::OverdoseAction::kDrop:
+                    g_overdoseDue.reset();
+                    spdlog::warn("Dose: overdose dropped, a menu was open or the game was paused for {:.0f} s", Core::kOverdoseGiveUpSeconds);
+                    break;
+                default:
+                    break;
+                }
             }
             while (auto d = Core::TakeDueComedown(g_comedowns, now)) {
                 due.push_back(*d);

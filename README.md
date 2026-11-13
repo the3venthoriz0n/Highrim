@@ -49,7 +49,7 @@ Two doses of any drugs within `iDoseWindowMinutes` game minutes (default 30) are
 5. Pick a wake spot: a discovered map marker 8000 to 30000 units from that prison. This is chosen before anything moves; if none exists the blackout aborts with your items untouched.
 6. Teleport to that marker, give you a "Crumpled Note (Hold)" reading "Your things are in the Hold prison.", advance game time by 6 hours, and add the Hangover ability (stamina -30, stamina regenerates 25% slower) for 24 game hours.
 
-Then it holds black for 2 s and fades back in. (The log numbers the steps as above but runs step 5 before steps 3 and 4.) It does nothing if a blackout is already running, you are in combat or dialogue, controls are not available, or you are dead.
+Then it holds black for 2 s and fades back in. (The log numbers the steps as above but runs step 5 before steps 3 and 4.) It does nothing if a blackout is already running, you are in combat or dialogue, controls are not available, you are dead, or the game is paused or any menu is open. An overdose triggered while a menu is open (for example the second dose from the inventory) waits until the menus close and is dropped (`overdose dropped` in the log) after 30 real seconds of waiting. Just before it moves any item and again before the teleport, the blackout re-checks that you are alive, loaded in, and that no load, new game, revert or death happened since it started; if something changed it aborts (putting back anything already moved). A load or new game also clears a running blackout and pending overdose and comedown timers. Non-playable items (other mods' tokens, summoned bound weapons) stay on you and are logged as skipped. Starting a blackout cancels a pending comedown.
 
 Winterhold: vanilla Winterhold has no prison chest in Skyrim.esm (it has a jail marker but no confiscation container), so it is never chosen as the nearest prison. The other eight holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale) are candidates, as long as their anchor can be resolved as above (a hold with no capital map marker in your worldspace is skipped and logged).
 
@@ -128,7 +128,7 @@ Log lines that prove each step:
 - Step 1 fade and controls: `Blackout: step 1`, `applied FadeToBlack`, `player controls disabled`.
 - Step 2 nearest hold: `step 2: player anchor`, `candidate <Hold> anchor`, `chose <Hold> (chest ...)`.
 - Step 5 wake spot (picked before anything moves): `step 5: N visible markers ...`, `wake spot marker ... from <source>`.
-- Steps 3 and 4 items: `step 3: using chest`, `step 4: unequip ...`, `moved N item stack(s) to the chest, verified; kept N quest item(s)`. Any `MISMATCH` line is followed by `rolling back` and an `ABORT` line, and a message box says nothing was taken.
+- Steps 3 and 4 items: `step 3: using chest`, `step 4: unequip ...`, `moved N item stack(s) to the chest, verified; kept N quest item(s)`. Any `MISMATCH` line is followed by `rolling back` and an `ABORT` line, and a message box says nothing was taken (or, if the rollback logged an item missing from the chest, that some stacks may still be in it).
 - Step 6: `teleporting to marker`, `position (...) -> (...)`, `note given`, `game time advanced 6 h`, `hangover ability added`, `hangover expires at game hour`.
 - Fade in: `sequence done, holding black`, then `stopped FadeToBlackHold`, `applied FadeToBlackBack`, `player controls enabled`, `finished (success)`.
 - Hangover removal (24 game hours later, wait in game): `hangover expired ... ability removed -> true`.
@@ -136,6 +136,18 @@ Log lines that prove each step:
 Then walk to the chosen hold's prison and open the chest named in `step 3`; your gear should be there. Ignored requests log a reason (`already running`, `in combat`, `not controllable`, `in dialogue`, `the player is dead`).
 
 Known unverified points: whether the crime faction exposes its chest and jail marker at runtime (discovery logs it, a Skyrim.esm id table is the fallback), the exterior-position search through doors, the map-marker "visible" flag as "discovered", `MoveTo` onto a marker, advancing game time by editing the calendar globals, and the fade image-space modifiers.
+
+## Known limitations
+
+- Skyrim Together's time sync may undo the 6 hour skip (the hangover expiry was computed after the skip, so it would then last longer in real game time).
+- The in-game date can lag a day behind after the skip, because only the hour and days passed are changed, not the day and month.
+- A missing or corrupt co-save loses the hangover expiry. On load, if you still carry the Hangover ability and no expiry is recorded, the expiry is set to now plus 24 game hours.
+- Changing `bDebug` in the MCM needs a game restart to change the log level.
+- Controls are always re-enabled after a blackout, even if another mod had disabled them before.
+- Worn gear stays unequipped (in the inventory) if a blackout aborts after the unequip step.
+- Moving worn or enchanted items to the chest and back keeps the stack but, on rollback with duplicate base items in the chest, may return an older instance of the same item.
+- A mounted player or a player in a transformed form is not specially handled.
+- The comedown timer runs in real time, so it keeps counting while menus are open.
 
 ## Test it (doses, overdose, addiction, UNVERIFIED in game)
 

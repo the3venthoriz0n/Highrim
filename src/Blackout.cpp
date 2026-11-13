@@ -38,9 +38,67 @@ namespace Highrim::Blackout
         double g_hangoverExpiry = 0.0;
 
         enum class Phase { kIdle, kFadingOut, kBlack };
-        Phase                                 g_phase = Phase::kIdle;
+        std::atomic<Phase>                    g_phase{ Phase::kIdle };
         std::chrono::steady_clock::time_point g_deadline;
         std::string                           g_reason;
+
+        // Bumped on load, new game, revert and player death. A blackout remembers the value it started with.
+        std::atomic<std::uint32_t> g_generation{ 0 };
+        std::uint32_t              g_runGeneration = 0;
+        std::atomic_bool           g_needCleanup{ false };  // a load interrupted a running blackout
+        bool                       g_wasDead = false;
+
+        void BumpGeneration(const char* why)
+        {
+            const auto g = ++g_generation;
+            spdlog::info("Blackout: generation -> {} ({})", g, why);
+        }
+
+        bool MenuOpen()
+        {
+            auto* ui = RE::UI::GetSingleton();
+            if (!ui) {
+                return true;
+            }
+            if (ui->GameIsPaused() || ui->IsItemMenuOpen() || ui->IsModalMenuOpen()) {
+                return true;
+            }
+            for (std::string_view name : { RE::InventoryMenu::MENU_NAME, RE::ContainerMenu::MENU_NAME, RE::FavoritesMenu::MENU_NAME,
+                     RE::MagicMenu::MENU_NAME, RE::BarterMenu::MENU_NAME, RE::GiftMenu::MENU_NAME, RE::CraftingMenu::MENU_NAME,
+                     RE::SleepWaitMenu::MENU_NAME, RE::TweenMenu::MENU_NAME, RE::MapMenu::MENU_NAME, RE::JournalMenu::MENU_NAME,
+                     RE::StatsMenu::MENU_NAME, RE::BookMenu::MENU_NAME, RE::LockpickingMenu::MENU_NAME,
+                     RE::MessageBoxMenu::MENU_NAME, RE::DialogueMenu::MENU_NAME, RE::Console::MENU_NAME,
+                     RE::LoadingMenu::MENU_NAME, RE::MainMenu::MENU_NAME, RE::TrainingMenu::MENU_NAME }) {
+                if (ui->IsMenuOpen(name)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Empty when the blackout may go on; otherwise why not. Used right before the steps that change the game.
+        std::string GuardFailure(RE::PlayerCharacter* player, std::uint32_t generation)
+        {
+            if (generation != g_generation.load()) {
+                return "the game was loaded or reverted";
+            }
+            if (!player) {
+                return "no player";
+            }
+            if (player->IsDead()) {
+                return "the player died";
+            }
+            if (!player->Is3DLoaded() || !player->GetParentCell()) {
+                return "the player is not loaded";
+            }
+            if (!RE::ControlMap::GetSingleton()) {
+                return "no control map";
+            }
+            if (MenuOpen()) {
+                return "a menu is open or the game is paused";
+            }
+            return {};
+        }
 
         constexpr RE::UserEvents::USER_EVENT_FLAG kBlocked = static_cast<RE::UserEvents::USER_EVENT_FLAG>(
             static_cast<int>(RE::UserEvents::USER_EVENT_FLAG::kMovement) |
@@ -108,51 +166,76 @@ namespace Highrim::Blackout
             return it == counts.end() ? 0 : it->second;
         }
 
-        // Puts every moved item back from the chest to the player. Logs each item that does not come back.
-        void Rollback(RE::PlayerCharacter* player, RE::TESObjectREFR* chest, const std::vector<Moved>& moved)
+        // Puts every moved item back from the chest to the player. Logs each item that does not come back and
+        // returns how many stacks could not be returned in full.
+        int Rollback(RE::PlayerCharacter* player, RE::TESObjectREFR* chest, const std::vector<Moved>& moved)
         {
             spdlog::warn("Blackout: rolling back {} item stack(s) from the chest to the player", moved.size());
+            int missing = 0;
             for (const auto& m : moved) {
                 try {
                     const auto inChest = CountIn(chest, m.object);
+                    if (inChest < m.count) {
+                        ++missing;
+                    }
                     if (inChest <= 0) {
                         spdlog::error("Blackout: rollback: {:08X} x{} is no longer in the chest", m.object->GetFormID(), m.count);
                         continue;
                     }
                     chest->RemoveItem(m.object, std::min(inChest, m.count), RE::ITEM_REMOVE_REASON::kStoreInContainer, nullptr, player);
                 } catch (...) {
+                    ++missing;
                     spdlog::error("Blackout: rollback: exception on {:08X}", m.object->GetFormID());
                 }
             }
+            if (missing > 0) {
+                spdlog::error("Blackout: rollback: {} stack(s) did NOT come back in full", missing);
+            }
+            return missing;
         }
 
-        void Finish(bool success)
+        void Finish(bool success, int missing = 0)
         {
             StopImod(kFadeToBlackHold, "FadeToBlackHold");
             TriggerImod(kFadeToBlackBack, "FadeToBlackBack");
             SetControls(true);
             if (success) {
-                RE::SendHUDMessage::ShowHUDMessage("You wake up with a splitting headache.");
+                auto* p = RE::PlayerCharacter::GetSingleton();
+                if (p && !p->IsDead()) {
+                    RE::SendHUDMessage::ShowHUDMessage("You wake up with a splitting headache.");
+                }
             }
-            spdlog::info("Blackout: finished ({})", success ? "success" : "aborted, items untouched");
+            if (success) {
+                spdlog::info("Blackout: finished (success)");
+            } else if (missing > 0) {
+                spdlog::error("Blackout: finished (aborted; {} item stack(s) could NOT be returned from the chest)", missing);
+            } else {
+                spdlog::info("Blackout: finished (aborted, items untouched or all returned)");
+            }
             g_phase = Phase::kIdle;
         }
 
-        void Abort(const std::string& why, bool showBox = true)
+        // missing: stacks a rollback could not return (0 when nothing was moved or everything came back).
+        void Abort(const std::string& why, bool showBox = true, int missing = 0)
         {
-            spdlog::error("Blackout: ABORT: {}", why);
+            spdlog::error("Blackout: ABORT: {}{}", why, missing > 0 ? " (some items are still in the prison chest)" : "");
             if (showBox) {
-                RE::DebugMessageBox(("Highrim: the blackout was cancelled and nothing was taken from you. (" + why + ")").c_str());
+                if (missing > 0) {
+                    RE::DebugMessageBox(("Highrim: the blackout was cancelled, but " + std::to_string(missing) +
+                        " item stack(s) could not be returned from the prison chest and may still be in it. See Highrim.log. (" + why + ")").c_str());
+                } else {
+                    RE::DebugMessageBox(("Highrim: the blackout was cancelled and nothing was taken from you. (" + why + ")").c_str());
+                }
             }
-            Finish(false);
+            Finish(false, missing);
         }
 
         // Steps 2 to 6 of the sequence, run once the screen is black. Game thread.
         void DoWork()
         {
             auto* player = RE::PlayerCharacter::GetSingleton();
-            if (!player) {
-                Abort("no player");
+            if (const auto why = GuardFailure(player, g_runGeneration); !why.empty()) {
+                Abort("cancelled before anything moved: " + why, !player || !player->IsDead());
                 return;
             }
             std::vector<Moved>  moved;
@@ -334,6 +417,10 @@ namespace Highrim::Blackout
                 auto chestBefore = chest->GetInventoryCounts();
                 spdlog::info("Blackout: step 3: chest holds {} item types before", chestBefore.size());
 
+                if (const auto why = GuardFailure(player, g_runGeneration); !why.empty()) {
+                    Abort("cancelled before step 4, nothing moved: " + why, !player->IsDead());
+                    return;
+                }
                 spdlog::info("Blackout: step 4: unequipping worn items");
                 auto* equip = RE::ActorEquipManager::GetSingleton();
                 if (equip) {
@@ -352,6 +439,7 @@ namespace Highrim::Blackout
                 auto inventory = player->GetInventory();
                 spdlog::info("Blackout: step 4: {} item types in the player inventory", inventory.size());
                 std::int32_t keptQuest = 0;
+                std::int32_t skippedNonPlayable = 0;
                 for (auto& [obj, data] : inventory) {
                     if (!obj || data.first <= 0) {
                         continue;
@@ -359,6 +447,14 @@ namespace Highrim::Blackout
                     if (data.second && data.second->IsQuestObject()) {
                         spdlog::info("Blackout: step 4: keeping quest item {:08X} ({})", obj->GetFormID(), obj->GetName());
                         ++keptQuest;
+                        continue;
+                    }
+                    const bool nonPlayable = (obj->GetFormFlags() & static_cast<std::uint32_t>(RE::TESForm::RecordFlags::kNonPlayable)) != 0;
+                    const auto* weapon     = obj->As<RE::TESObjectWEAP>();
+                    if (nonPlayable || (weapon && weapon->IsBound())) {
+                        spdlog::info("Blackout: step 4: skipping non-playable {:08X} ({}) x{}{}", obj->GetFormID(), obj->GetName(), data.first,
+                            (weapon && weapon->IsBound()) ? " (bound weapon)" : "");
+                        ++skippedNonPlayable;
                         continue;
                     }
                     const std::int32_t count        = data.first;
@@ -371,12 +467,21 @@ namespace Highrim::Blackout
                     if (chestNow - chestPrev != count || playerNow != 0) {
                         spdlog::error("Blackout: step 4: MISMATCH for {:08X} ({}): moved {}, chest {} -> {}, player now {}",
                             obj->GetFormID(), obj->GetName(), count, chestPrev, chestNow, playerNow);
-                        Rollback(player, chest, moved);
-                        Abort("item transfer did not verify");
+                        const int missing = Rollback(player, chest, moved);
+                        Abort("item transfer did not verify", true, missing);
                         return;
                     }
                 }
-                spdlog::info("Blackout: step 4: moved {} item stack(s) to the chest, verified; kept {} quest item(s)", moved.size(), keptQuest);
+                spdlog::info("Blackout: step 4: moved {} item stack(s) to the chest, verified; kept {} quest item(s), skipped {} non-playable", moved.size(), keptQuest,
+                    skippedNonPlayable);
+
+                // Before step 6: re-check. Anything wrong now puts the items back and aborts.
+                if (const auto why = GuardFailure(player, g_runGeneration); !why.empty()) {
+                    spdlog::error("Blackout: before step 6: {}, rolling back", why);
+                    const int missing = Rollback(player, chest, moved);
+                    Abort("cancelled before step 6: " + why, !player->IsDead(), missing);
+                    return;
+                }
 
                 // Step 6: teleport, note, hangover, time.
                 spdlog::info("Blackout: step 6: teleporting to marker {:08X}", spotRef->GetFormID());
@@ -432,22 +537,28 @@ namespace Highrim::Blackout
                 spdlog::info("Blackout: sequence done, holding black for {} ms", kBlackTime.count());
             } catch (const std::exception& e) {
                 spdlog::error("Blackout: exception: {}", e.what());
+                int missing = 0;
                 if (chest && !moved.empty()) {
-                    Rollback(player, chest, moved);
+                    missing = Rollback(player, chest, moved);
                 }
-                Abort("unexpected error");
+                Abort("unexpected error", true, missing);
             } catch (...) {
                 spdlog::error("Blackout: unknown exception");
+                int missing = 0;
                 if (chest && !moved.empty()) {
-                    Rollback(player, chest, moved);
+                    missing = Rollback(player, chest, moved);
                 }
-                Abort("unexpected error");
+                Abort("unexpected error", true, missing);
             }
         }
 
         void Tick()
         {
             const auto now = std::chrono::steady_clock::now();
+            if (g_phase == Phase::kFadingOut && g_runGeneration != g_generation.load()) {
+                Abort("the game state changed during the fade (death, load or revert); nothing was touched", false);
+                return;
+            }
             if (g_phase == Phase::kFadingOut && now >= g_deadline) {
                 TriggerImod(kFadeToBlackHold, "FadeToBlackHold");
                 DoWork();
@@ -472,7 +583,7 @@ namespace Highrim::Blackout
             const bool down = keyboard->IsPressed(key);
             if (down && !wasDown) {
                 auto* ui = RE::UI::GetSingleton();
-                if (ui && (ui->IsMenuOpen(RE::Console::MENU_NAME) || ui->GameIsPaused())) {
+                if (ui && (ui->IsMenuOpen(RE::Console::MENU_NAME) || MenuOpen())) {
                     spdlog::info("Blackout: hotkey ignored, a menu is open");
                 } else {
                     spdlog::info("Blackout: hotkey pressed (scan code {})", key);
@@ -482,6 +593,17 @@ namespace Highrim::Blackout
             wasDown = down;
         }
 
+        // Bumps the generation once when the player dies.
+        void WatchDeath()
+        {
+            auto*      player = RE::PlayerCharacter::GetSingleton();
+            const bool dead   = player && player->IsDead();
+            if (dead && !g_wasDead) {
+                BumpGeneration("player died");
+            }
+            g_wasDead = dead;
+        }
+
         void PollOnGameThread()
         {
             static int ticks = 0;
@@ -489,6 +611,7 @@ namespace Highrim::Blackout
                 Config::ReloadIfChanged();
             }
             PollHotkey();
+            WatchDeath();
             Tick();
             TickHangover();
             Doses::Tick();
@@ -518,6 +641,38 @@ namespace Highrim::Blackout
     bool Busy()
     {
         return g_phase != Phase::kIdle;
+    }
+
+    bool MenuOrPauseActive()
+    {
+        return MenuOpen();
+    }
+
+    std::uint32_t Generation()
+    {
+        return g_generation.load();
+    }
+
+    void OnStateReset(const char* why)
+    {
+        BumpGeneration(why);
+        if (g_phase.exchange(Phase::kIdle) != Phase::kIdle) {
+            g_needCleanup = true;
+            spdlog::warn("Blackout: a running blackout was dropped by {}", why);
+        }
+    }
+
+    void OnGameLoaded()
+    {
+        BumpGeneration("game loaded or new game");
+        g_wasDead = false;
+        g_phase   = Phase::kIdle;
+        if (g_needCleanup.exchange(false)) {
+            StopImod(kFadeToBlack, "FadeToBlack");
+            StopImod(kFadeToBlackHold, "FadeToBlackHold");
+            SetControls(true);
+            spdlog::info("Blackout: cleaned up a blackout interrupted by a load");
+        }
     }
 
     void Run(const char* reason)
@@ -555,8 +710,14 @@ namespace Highrim::Blackout
             spdlog::info("Blackout: ignored, in dialogue");
             return;
         }
+        if (MenuOpen()) {
+            spdlog::info("Blackout: ignored, the game is paused or a menu is open");
+            return;
+        }
 
         spdlog::info("Blackout: step 1: fade to black, controls off");
+        Doses::CancelComedowns();  // a pending comedown cast must not fire in the middle of the blackout
+        g_runGeneration = g_generation.load();
         g_reason = why;
         TriggerImod(kFadeToBlack, "FadeToBlack");
         SetControls(false);

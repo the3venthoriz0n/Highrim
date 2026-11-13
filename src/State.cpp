@@ -21,6 +21,7 @@ namespace Highrim::State
                 g_addiction = Core::Addiction{};
             }
             Blackout::SetHangoverExpiryHours(0.0);
+            Blackout::OnStateReset("revert or load");
         }
 
         void OnRevert(SKSE::SerializationInterface*)
@@ -130,20 +131,31 @@ namespace Highrim::State
 
     void OnGameLoaded()
     {
+        Blackout::OnGameLoaded();
         Withdrawal::OnGameLoaded();
         Doses::CancelComedowns();
-        const double expiry = Blackout::GetHangoverExpiryHours();
-        if (expiry <= 0.0) {
-            return;
-        }
-        auto* calendar = RE::Calendar::GetSingleton();
-        auto* player   = RE::PlayerCharacter::GetSingleton();
-        auto* handler  = RE::TESDataHandler::GetSingleton();
+        double expiry   = Blackout::GetHangoverExpiryHours();
+        auto*  calendar = RE::Calendar::GetSingleton();
+        auto*  player   = RE::PlayerCharacter::GetSingleton();
+        auto*  handler  = RE::TESDataHandler::GetSingleton();
         if (!calendar || !calendar->gameDaysPassed || !player || !handler) {
-            spdlog::warn("State: cannot restore the hangover, game objects missing");
+            if (expiry > 0.0) {
+                spdlog::warn("State: cannot restore the hangover, game objects missing");
+            }
             return;
         }
         const double now = static_cast<double>(calendar->gameDaysPassed->value) * 24.0;
+        if (expiry <= 0.0) {
+            // No expiry recorded (missing or corrupt co-save). If the player still carries the ability, it would
+            // never be removed: give it a fresh 24 game hours.
+            auto* carried = handler->LookupForm<RE::SpellItem>(Forms::HighrimHangover, Forms::kPluginName);
+            if (carried && player->HasSpell(carried)) {
+                expiry = now + 24.0;
+                Blackout::SetHangoverExpiryHours(expiry);
+                spdlog::warn("State: hangover ability present but no expiry recorded, set to game hour {:.2f} (now + 24 h)", expiry);
+            }
+            return;
+        }
         if (now >= expiry) {
             return;  // TickHangover removes it
         }

@@ -210,6 +210,17 @@ namespace
             CHECK(!IsDescendantWorld(1, 9, cyc));
         }
 
+        // Overdose deferral.
+        CHECK(DecideOverdose(10.0, 11.5, false) == OverdoseAction::kWait);   // not due yet
+        CHECK(DecideOverdose(11.5, 11.5, false) == OverdoseAction::kRun);
+        CHECK(DecideOverdose(12.0, 11.5, true) == OverdoseAction::kWait);    // menu open
+        CHECK(DecideOverdose(41.4, 11.5, true) == OverdoseAction::kWait);    // 29.9 s of waiting
+        CHECK(DecideOverdose(41.5, 11.5, true) == OverdoseAction::kDrop);    // 30 s
+        CHECK(DecideOverdose(100.0, 11.5, true) == OverdoseAction::kDrop);
+        CHECK(DecideOverdose(41.4, 11.5, false) == OverdoseAction::kRun);    // menu closed just in time
+        CHECK(DecideOverdose(nan, 11.5, false) == OverdoseAction::kDrop);
+        CHECK(DecideOverdose(11.5, inf, false) == OverdoseAction::kDrop);
+
         // Drug id mapping.
         CHECK(DrugFromLocalId(Highrim::Forms::HighrimRimerush) == std::optional<DrugType>(DrugType::kStimulant));
         CHECK(DrugFromLocalId(Highrim::Forms::HighrimVelvetHaze) == std::optional<DrugType>(DrugType::kDepressant));

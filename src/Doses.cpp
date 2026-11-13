@@ -8,6 +8,8 @@
 #include "Forms.h"
 #include "State.h"
 
+#include <array>
+#include <utility>
 #include <vector>
 
 namespace Highrim::Doses
@@ -16,11 +18,27 @@ namespace Highrim::Doses
     {
         // Give the potion's own effect time to apply before the blackout takes the player's gear.
         constexpr double kOverdoseDelaySeconds = 1.5;
+        // Screen effects are re-triggered this often while a high lasts (image space modifiers fade).
+        constexpr double kVisualPeriodSeconds = 10.0;
 
+        // All of this is guarded by g_mutex. Stacks live in memory only.
         std::mutex            g_mutex;
         Core::ComedownTimers  g_comedowns{};
         Core::DiagnosticTimers g_diagnostics{};
         std::optional<double> g_overdoseDue;  // real seconds
+        Core::DoseStacks      g_stacks{};
+        std::array<int, 3>    g_wantedLevel{};               // stack ability level each drug should carry (0 = none)
+        std::array<int, 3>    g_appliedLevel{ -1, -1, -1 };  // what the player carries; -1 = unknown, always re-sync
+        std::array<double, 3> g_strength{ 0.6, 0.6, 0.6 };
+        std::array<std::optional<double>, 3> g_visualDue{};  // real seconds; set while that drug's high lasts
+        std::uint32_t         g_epoch = 0;                   // bumped on every reset so stale game-thread work is dropped
+
+        constexpr std::array<std::array<std::uint32_t, 3>, 3> kStackIds{ {
+            { Forms::HighrimStackRimerush1, Forms::HighrimStackRimerush2, Forms::HighrimStackRimerush3 },
+            { Forms::HighrimStackVelvetHaze1, Forms::HighrimStackVelvetHaze2, Forms::HighrimStackVelvetHaze3 },
+            { Forms::HighrimStackDreamcap1, Forms::HighrimStackDreamcap2, Forms::HighrimStackDreamcap3 },
+        } };
+        constexpr std::array<std::uint32_t, 3> kImodIds{ Forms::kImodStimulant, Forms::kImodDepressant, Forms::kImodHallucinogen };
 
         double RealSeconds()
         {
@@ -151,6 +169,89 @@ namespace Highrim::Doses
             spdlog::info("Comedown: cast {} comedown", DrugName(type));
         }
 
+        RE::SpellItem* LookupStack(Core::DrugType type, int level)
+        {
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            if (!handler || level < 1 || level > Core::kMaxStackLevel) {
+                return nullptr;
+            }
+            return handler->LookupForm<RE::SpellItem>(
+                kStackIds[static_cast<std::size_t>(type)][static_cast<std::size_t>(level - 1)], Forms::kPluginName);
+        }
+
+        // Game thread. Makes the player carry exactly the stack ability for each drug's wanted level (none for 0),
+        // never more than one per drug. Remembers what it did only if no reset happened meanwhile.
+        void SyncStackAbilities()
+        {
+            std::array<int, 3> wanted{};
+            std::array<int, 3> applied{};
+            std::uint32_t      epoch = 0;
+            {
+                std::lock_guard lock(g_mutex);
+                wanted  = g_wantedLevel;
+                applied = g_appliedLevel;
+                epoch   = g_epoch;
+            }
+            if (wanted == applied) {
+                return;
+            }
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* ui     = RE::UI::GetSingleton();
+            if (!player || !player->Is3DLoaded() || !player->GetParentCell() || !ui ||
+                ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+                return;
+            }
+            auto result = applied;
+            for (std::size_t i = 0; i < 3; ++i) {
+                if (wanted[i] == applied[i]) {
+                    continue;
+                }
+                const auto type = static_cast<Core::DrugType>(i);
+                bool       ok   = true;
+                for (int level = 1; level <= Core::kMaxStackLevel; ++level) {
+                    auto* spell = LookupStack(type, level);
+                    if (!spell) {
+                        spdlog::error("Stack: ability {} level {} not found in {}", DrugName(type), level, Forms::kPluginName);
+                        ok = false;
+                    } else if (player->HasSpell(spell)) {
+                        const bool removed = player->RemoveSpell(spell);
+                        spdlog::info("Stack: removed {} level {} ability, RemoveSpell -> {}", DrugName(type), level, removed);
+                    }
+                }
+                if (!ok) {
+                    continue;  // retried on the next tick
+                }
+                if (wanted[i] > 0) {
+                    auto* spell = LookupStack(type, wanted[i]);
+                    if (!spell) {
+                        continue;
+                    }
+                    const bool added = player->AddSpell(spell);
+                    spdlog::info("Stack: {} level {} ability, AddSpell -> {}", DrugName(type), wanted[i], added);
+                    if (!added && !player->HasSpell(spell)) {
+                        continue;
+                    }
+                }
+                result[i] = wanted[i];
+            }
+            std::lock_guard lock(g_mutex);
+            if (epoch == g_epoch) {
+                g_appliedLevel = result;
+            }
+        }
+
+        void TriggerVisual(Core::DrugType type, double strength)
+        {
+            const auto id   = kImodIds[static_cast<std::size_t>(type)];
+            auto*      imod = RE::TESForm::LookupByID<RE::TESImageSpaceModifier>(id);
+            if (!imod) {
+                spdlog::error("Visual: image space modifier {:08X} for {} not found", id, DrugName(type));
+                return;
+            }
+            RE::ImageSpaceModifierInstanceForm::Trigger(imod, static_cast<float>(strength), nullptr);
+            spdlog::debug("Visual: {} image space modifier {:08X} at strength {:.2f}", DrugName(type), id, strength);
+        }
+
         void OnDrugConsumed(Core::DrugType type)
         {
             const auto settings = Config::Get();
@@ -163,17 +264,33 @@ namespace Highrim::Doses
                 spdlog::warn("Dose: {} ignored, no calendar", DrugName(type));
                 return;
             }
-            const auto r = State::RecordDose(type, now, static_cast<int>(settings.doseWindowMinutes), settings.addiction);
-            spdlog::info("Dose: {} addiction {:.1f}/{:.1f}/{:.1f} overdose={} (game hour {:.2f}, addiction {}, overdose setting {})",
-                DrugName(type), r.after.level[0], r.after.level[1], r.after.level[2], r.overdose, now,
-                settings.addiction ? "on" : "off", settings.overdose ? "on" : "off");
+            const auto r = State::RecordDose(type, now, settings.addiction);
 
             std::lock_guard lock(g_mutex);
+            const auto      i             = static_cast<std::size_t>(type);
+            const int       stack         = Core::AddStackedDose(g_stacks, type, now, static_cast<int>(settings.doseWindowMinutes));
+            const int       blackoutDoses = static_cast<int>(settings.blackoutDoses);
+            const int       level         = Core::StackLevel(stack);
+            const double    strength      = Core::StrengthForStack(stack);
+            const bool      blackout      = settings.overdose && Core::ShouldBlackout(stack, blackoutDoses);
+            spdlog::info("Dose: {} stack {}/{} level {} strength {:.2f}", DrugName(type), stack, blackoutDoses, level, strength);
+            spdlog::info("Dose: {} addiction {:.1f}/{:.1f}/{:.1f} blackout={} (game hour {:.2f}, addiction {}, overdose setting {})",
+                DrugName(type), r.after.level[0], r.after.level[1], r.after.level[2], blackout, now,
+                settings.addiction ? "on" : "off", settings.overdose ? "on" : "off");
+
             Core::OnComedownDose(g_comedowns, type, RealSeconds());
             Core::ScheduleDiagnostics(g_diagnostics, type, RealSeconds());
-            if (r.overdose && settings.overdose && !g_overdoseDue) {
-                g_overdoseDue = RealSeconds() + kOverdoseDelaySeconds;
+            if (blackout || g_overdoseDue) {
+                // A blackout is coming: no stack ability from here on (and the current one goes).
+                g_wantedLevel[i] = 0;
+                if (blackout && !g_overdoseDue) {
+                    g_overdoseDue = RealSeconds() + kOverdoseDelaySeconds;
+                }
+            } else {
+                g_wantedLevel[i] = level;
             }
+            g_strength[i]  = strength;
+            g_visualDue[i] = RealSeconds();  // first trigger on the next tick
         }
 
         class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent>
@@ -220,7 +337,9 @@ namespace Highrim::Doses
         bool                        runOverdose = false;
         std::vector<Core::DrugType> due;
         std::vector<Core::DiagnosticEntry> diagnostics;
+        std::vector<std::pair<Core::DrugType, double>> visuals;
         const bool                  uiBlocked = Blackout::MenuOrPauseActive();
+        const bool                  busy      = Blackout::Busy();
         {
             std::lock_guard lock(g_mutex);
             const double    now = RealSeconds();
@@ -241,6 +360,15 @@ namespace Highrim::Doses
             }
             while (auto d = Core::TakeDueComedown(g_comedowns, now)) {
                 due.push_back(*d);
+                // The high ends: its stack ability and screen effect go (the stack count keeps its own window).
+                g_wantedLevel[static_cast<std::size_t>(*d)] = 0;
+                g_visualDue[static_cast<std::size_t>(*d)].reset();
+            }
+            for (std::size_t i = 0; i < 3; ++i) {
+                if (g_visualDue[i] && now >= *g_visualDue[i] && !busy && !g_overdoseDue) {
+                    visuals.emplace_back(static_cast<Core::DrugType>(i), g_strength[i]);
+                    g_visualDue[i] = now + kVisualPeriodSeconds;
+                }
             }
             while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {
                 diagnostics.push_back(*e);
@@ -249,6 +377,10 @@ namespace Highrim::Doses
         for (auto d : due) {
             CastComedown(d);
         }
+        for (const auto& [type, strength] : visuals) {
+            TriggerVisual(type, strength);
+        }
+        SyncStackAbilities();
         for (const auto& e : diagnostics) {
             LogActiveEffects(e.type, e.pass);
         }
@@ -264,5 +396,12 @@ namespace Highrim::Doses
         Core::CancelComedowns(g_comedowns);
         g_diagnostics.pending.clear();
         g_overdoseDue.reset();
+        // Load, new game, revert or blackout start: forget the stacks and have the game thread strip every stack
+        // ability (unknown applied state forces a full sync).
+        Core::ResetStacks(g_stacks);
+        g_wantedLevel  = {};
+        g_appliedLevel = { -1, -1, -1 };
+        g_visualDue    = {};
+        ++g_epoch;
     }
 }

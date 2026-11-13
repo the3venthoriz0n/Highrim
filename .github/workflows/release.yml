@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag like v0.1.0 builds the plugin on Windows, runs the tests, packages
+# Pushing a tag like v0.1.0 (the tagged commit must be on main, or the run stops) builds the plugin on Windows, runs the tests, packages
 # dist/Highrim-<version>.zip, creates a GitHub release with it, and (when configured)
 # uploads it to Nexus Mods as a new version of an existing file.
 #
@@ -31,6 +31,14 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Tag must be on main
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Tag $env:GITHUB_REF_NAME is not on main; nothing was published." }
 
       - name: Work out the version
         id: ver

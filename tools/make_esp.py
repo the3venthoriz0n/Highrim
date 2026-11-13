@@ -14,9 +14,11 @@ Records, by fixed EDID (form IDs are assigned in this order from 0x800; the MCM 
         HighrimFxDetectEnemyOut / EnemyIn / FriendOut / FriendIn   Detect Life copies (description on one only)
         HighrimFxRegenDown                          stamina regen drain, shared by comedowns (potion clone)
         HighrimAbRegenDown / AbStaminaDown / AbHealRateDown   constant-effect clones for withdrawal/hangover
+        HighrimAbSpeedUp / AbStaminaUp / AbRegenUp / AbResistUp / AbSlow   constant-effect clones for the dose stacks
   SPEL  HighrimComedownRimerush / VelvetHaze / Dreamcap   60 s fire-and-forget spells the plugin casts at the end of a high
         HighrimWithdrawal1 / 2 / 3                  withdrawal abilities (type Ability), one set for all drug types
         HighrimHangover                             ability the plugin adds after a blackout and removes after a game day
+        HighrimStack<Rimerush|VelvetHaze|Dreamcap>1..3   dose stack abilities (type Ability), one at a time per drug
         HighrimBlurPulse                            8 s blur the plugin casts now and then (withdrawal tier 2, hangover)
   BOOK  HighrimNote<Hold>                           nine notes: Whiterun Eastmarch Rift Haafingar Hjaalmarch Reach
                                                     Falkreath Pale Winterhold
@@ -51,6 +53,13 @@ GIANT_LICHEN, GLOWING_MUSHROOM, LAVENDER, HANGING_MOSS, SWAMP_FUNGAL_POD = (
 COOKPOT_KEYWORD = 0x000A5CB3
 VENDOR_ITEM_POTION = 0x0008CDEC
 MAGIC_ALCH_BENEFICIAL = 0x000F8A4E
+# Screen effects the plugin triggers itself (vanilla IMAD records in Skyrim.esm), one per drug type. Picked by
+# name only; what they look like in game is unverified. Candidates considered are listed in the README.
+IMOD_STIMULANT = 0x0010C761     # QuickReflexesImod: adrenaline rush (bright, contrasty)
+IMOD_DEPRESSANT = 0x00031060    # ParalyzeMassImod: heavy blur and drained colour
+IMOD_HALLUCINOGEN = 0x000C1966  # DA13PeryiteVisionImod: strong tinted vision
+IMODS = [("kImodStimulant", IMOD_STIMULANT), ("kImodDepressant", IMOD_DEPRESSANT),
+         ("kImodHallucinogen", IMOD_HALLUCINOGEN)]
 DRUGGED_EFFECT = 0x000E3CBB   # dunSleepingTreeDruggedAlch: the sleeping tree sap trip (script driven image space)
 # The four Detect Life effects the vanilla Detect Life scroll (TGDetectLifeScroll) uses, with its areas
 # and per-effect condition (CTDA, copied byte for byte from that scroll).
@@ -74,6 +83,15 @@ T_ALCH, T_BOOK, T_ABILITY, T_SPELL, T_COBJ, T_KYWD = "00057A7A", "000E1A9F", "00
 
 ACTOR_VALUE_SPEED_MULT = 30
 ACTOR_VALUE_DAMAGE_RESIST = 39
+ACTOR_VALUE_STAMINA_RATE = 0x9D   # the value AbDamageStaminaRate and AlchFortifyStaminaRate change
+
+# Dose stacks: stack abilities come in levels 1..3 (stack 2, 3, 4 and beyond), on top of the potion's own effects.
+STACK_LEVELS = 3
+HIGH_SECONDS = 120   # how long a potion's own effects last
+
+# Potion base magnitudes. Task 9 raised them about 35% (was: speed 25, stamina 50, regen 100; resist 150, slow 20).
+RIMERUSH_BASE = {"speed": 34, "stamina": 68, "regen": 135}
+VELVET_BASE = {"resist": 200, "slow": 27}
 
 # (EDID, name, description, template, overrides)
 MGEFS = [
@@ -95,6 +113,16 @@ MGEFS = [
     ("HighrimAbRegenDown", "Cravings", "Stamina regenerates <mag>% slower.", T_AB_DMG_STAMINA_RATE, {}),
     ("HighrimAbStaminaDown", "Shakes", "Stamina is changed by <mag> points.", T_AB_FORT_STAMINA, {}),
     ("HighrimAbHealRateDown", "Slow Healing", "Health regenerates <mag>% slower.", T_AB_DMG_HEAL_RATE, {}),
+    # Dose stack effects: constant-effect (ability) clones of AbFortifyStamina with the actor value changed.
+    ("HighrimAbSpeedUp", "Surge Speed", "Movement speed is increased by <mag>%.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_SPEED_MULT}),
+    ("HighrimAbStaminaUp", "Surge Stamina", "Stamina is increased by <mag> points.", T_AB_FORT_STAMINA, {}),
+    ("HighrimAbRegenUp", "Surge Recovery", "Stamina regenerates <mag>% faster.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_STAMINA_RATE}),
+    ("HighrimAbResistUp", "Heavy Armor", "Armor rating is increased by <mag>.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_DAMAGE_RESIST}),
+    ("HighrimAbSlow", "Dragging Limbs", "Movement speed is changed by <mag>%.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_SPEED_MULT}),
 ]
 
 
@@ -104,6 +132,30 @@ def fx(edid):
 
 def effect(mgef, magnitude, duration, area=0, conditions=()):
     return {"mgef": mgef, "mag": magnitude, "area": area, "dur": duration, "ctda": list(conditions)}
+
+
+# Per drug: (EDID prefix, display name, [(MGEF EDID, magnitudes for stack level 1, 2, 3)]). Each effect appears once
+# per ability and each level is strictly stronger than the one before. Dreamcap has no stat effect of its own, so
+# its stack is a clumsy trip: slowed movement and slowed stamina recovery (a design call, see the README).
+STACKS = [
+    ("HighrimStackRimerush", "Rimerush Surge",
+     [("HighrimAbSpeedUp", (10, 20, 30)), ("HighrimAbStaminaUp", (25, 50, 75)), ("HighrimAbRegenUp", (50, 100, 150))]),
+    ("HighrimStackVelvetHaze", "Velvet Haze Weight",
+     [("HighrimAbResistUp", (50, 100, 150)), ("HighrimAbSlow", (-8, -16, -24))]),
+    ("HighrimStackDreamcap", "Dreamcap Daze",
+     [("HighrimAbSlow", (-5, -10, -15)), ("HighrimAbRegenDown", (15, 30, 45))]),
+]
+ROMAN = ["I", "II", "III"]
+STACK_EDIDS = [f"{prefix}{n}" for prefix, _, _ in STACKS for n in range(1, STACK_LEVELS + 1)]
+
+
+def stack_spell_defs():
+    out = []
+    for prefix, name, fxs in STACKS:
+        for n in range(1, STACK_LEVELS + 1):
+            out.append((f"{prefix}{n}", f"{name} {ROMAN[n - 1]}", "ability",
+                        [effect(fx(mgef), mags[n - 1], 0) for mgef, mags in fxs]))
+    return out
 
 
 def spell_defs():
@@ -122,18 +174,20 @@ def spell_defs():
         ("HighrimHangover", "Hangover", "ability",
          [effect(fx("HighrimAbStaminaDown"), -30, 0), effect(fx("HighrimAbRegenDown"), 25, 0)]),
         ("HighrimBlurPulse", "Blurred Vision", "spell", [effect(DRUGGED_EFFECT, 0, 8)]),
-    ]
+    ] + stack_spell_defs()
 
 
 def drug_defs():
     """(EDID, name, value, effects)."""
-    high = 120
+    high = HIGH_SECONDS
     return [
         ("HighrimRimerush", "Rimerush", 60,
-         [effect(fx("HighrimFxRimerushSpeed"), 25, high), effect(fx("HighrimFxRimerushStamina"), 50, high),
-          effect(fx("HighrimFxRimerushRegen"), 100, high)]),
+         [effect(fx("HighrimFxRimerushSpeed"), RIMERUSH_BASE["speed"], high),
+          effect(fx("HighrimFxRimerushStamina"), RIMERUSH_BASE["stamina"], high),
+          effect(fx("HighrimFxRimerushRegen"), RIMERUSH_BASE["regen"], high)]),
         ("HighrimVelvetHaze", "Velvet Haze", 55,
-         [effect(fx("HighrimFxVelvetResist"), 150, high), effect(fx("HighrimFxVelvetSlow"), 20, high)]),
+         [effect(fx("HighrimFxVelvetResist"), VELVET_BASE["resist"], high),
+          effect(fx("HighrimFxVelvetSlow"), VELVET_BASE["slow"], high)]),
         ("HighrimDreamcap", "Dreamcap", 70,
          [effect(DRUGGED_EFFECT, 0, high)]
          + [effect(fx(mgef), 0, high, area, [ctda]) for mgef, area, ctda in DETECT_LIFE]),
@@ -149,7 +203,7 @@ RECIPES = [  # (EDID, product EDID, [(ingredient, count)])
 KEYWORD_EDID = "HighrimDrug"
 SPELL_EDIDS = ["HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
                "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover",
-               "HighrimBlurPulse"]
+               "HighrimBlurPulse"] + STACK_EDIDS
 NOTE_EDIDS = ["HighrimNote" + hold for hold in HOLDS]
 ALCH_EDIDS = ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"]
 COBJ_EDIDS = [r[0] for r in RECIPES]
@@ -362,6 +416,9 @@ def forms_header(forms):
     ]
     for name, local in forms:
         lines.append(f"    inline constexpr std::uint32_t {name} = 0x{local:06X};")
+    lines += ["", "    // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers, one per drug type."]
+    for name, formid in IMODS:
+        lines.append(f"    inline constexpr std::uint32_t {name} = 0x{formid:06X};")
     lines += ["}", ""]
     return "\n".join(lines)
 

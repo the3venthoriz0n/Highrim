@@ -33,12 +33,13 @@ EXPECTED_EDIDS = {
         "HighrimFxVelvetResist", "HighrimFxVelvetSlow", "HighrimFxRegenDown",
         "HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn", "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn",
         "HighrimAbRegenDown", "HighrimAbStaminaDown", "HighrimAbHealRateDown",
+        "HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbResistUp", "HighrimAbSlow",
     ],
     "SPEL": [
         "HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
         "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3",
         "HighrimHangover", "HighrimBlurPulse",
-    ],
+    ] + [f"HighrimStack{drug}{n}" for drug in ("Rimerush", "VelvetHaze", "Dreamcap") for n in (1, 2, 3)],
     "BOOK": ["HighrimNote" + hold for hold in HOLDS],
     "ALCH": ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"],
     "COBJ": ["HighrimRecipeRimerush", "HighrimRecipeVelvetHaze", "HighrimRecipeDreamcap"],
@@ -339,6 +340,45 @@ class EspTests(unittest.TestCase):
         self.assertEqual(mags, sorted(set(mags)))
         self.assertEqual(len(mags), 3)
 
+    def test_stack_abilities_escalate_and_show_each_effect_once(self):
+        names = set()
+        for drug in ("Rimerush", "VelvetHaze", "Dreamcap"):
+            levels = [self.edid[f"HighrimStack{drug}{n}"] for n in (1, 2, 3)]
+            per_level = []
+            for spell in levels:
+                spit = spell.first("SPIT")
+                self.assertEqual(struct.unpack_from("<I", spit, 8)[0], 4, f"{spell.edid} is an ability")
+                efids = [struct.unpack("<I", raw)[0] for raw in spell.get("EFID")]
+                self.assertEqual(len(set(efids)), len(efids), f"{spell.edid} lists no effect twice")
+                self.assertGreaterEqual(len(efids), 2)
+                for efit in spell.get("EFIT"):
+                    self.assertEqual(struct.unpack("<fII", efit)[2], 0, "ability effects have no duration")
+                mags = {fid: abs(struct.unpack("<f", efit[:4])[0]) for fid, efit in zip(efids, spell.get("EFIT"))}
+                per_level.append(mags)
+                name = spell.first("FULL")
+                self.assertNotIn(name, names, "distinct names")
+                names.add(name)
+            self.assertEqual(set(per_level[0]), set(per_level[1]))
+            self.assertEqual(set(per_level[0]), set(per_level[2]))
+            for fid in per_level[0]:
+                self.assertLess(per_level[0][fid], per_level[1][fid], "level 2 stronger than 1")
+                self.assertLess(per_level[1][fid], per_level[2][fid], "level 3 stronger than 2")
+        # The new ability effects are constant-effect clones (cast type 0) with distinct actor values / names.
+        for edid in ("HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbResistUp", "HighrimAbSlow"):
+            data = self.edid[edid].first("DATA")
+            self.assertEqual(struct.unpack_from("<I", data, 64)[0], 34, "peak value modifier")
+            self.assertTrue(self.edid[edid].first("DNAM").strip(bytes(1)), f"{edid} has its description")
+        av = lambda e: struct.unpack_from("<I", self.edid[e].first("DATA"), 68)[0]
+        self.assertEqual(av("HighrimAbSpeedUp"), 30)
+        self.assertEqual(av("HighrimAbRegenUp"), 0x9D)
+        self.assertEqual(av("HighrimAbResistUp"), 39)
+
+    def test_potion_base_magnitudes_were_raised(self):
+        def mags(edid):
+            return [struct.unpack("<f", e[:4])[0] for e in self.edid[edid].get("EFIT")]
+        self.assertEqual(mags("HighrimRimerush"), [34.0, 68.0, 135.0])  # was 25, 50, 100
+        self.assertEqual(mags("HighrimVelvetHaze"), [200.0, 27.0])      # was 150, 20
+
     # --- BOOK -------------------------------------------------------------------
     def test_nine_notes_with_exact_text(self):
         books = self.plugin.by_type("BOOK")
@@ -365,8 +405,12 @@ class EspTests(unittest.TestCase):
     def test_forms_header_matches_the_plugin(self):
         text = read_text(self.hdr)
         found = dict(re.findall(r"constexpr\s+std::uint32_t\s+(\w+)\s*=\s*0x([0-9A-Fa-f]+);", text))
+        imods = {k: v.upper().zfill(6) for k, v in found.items() if k.startswith("kImod")}
+        self.assertEqual(len(imods), 3, "one vanilla screen effect per drug type")
+        own = {k: v for k, v in found.items() if not k.startswith("kImod")}
         expected = {r.edid: f"{r.formid & 0xFFFFFF:06X}" for r in self.plugin.records}
-        self.assertEqual({k: v.upper() for k, v in found.items()}, expected)
+        self.assertEqual({k: v.upper() for k, v in own.items()}, expected)
+        self.vanilla_imods = imods
         self.assertIn('"Highrim.esp"', text)
 
     # --- vanilla references (needs the game's Skyrim.esm, skipped without it) ----
@@ -393,6 +437,9 @@ class EspTests(unittest.TestCase):
                         self.assertEqual(vanilla[formid], expectations[tag], f"{record.edid} {tag} {formid:08X}")
                     seen += 1
         self.assertGreater(seen, 20)
+        self.test_forms_header_matches_the_plugin()
+        for name, local in self.vanilla_imods.items():
+            self.assertEqual(vanilla.get(int(local, 16)), "IMAD", f"{name} {local} is not an IMAD in Skyrim.esm")
 
 
 if __name__ == "__main__":

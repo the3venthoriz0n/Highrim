@@ -22,6 +22,7 @@ set(PROJECT_SOURCES
     src/Config.cpp
     src/Core.h
     src/Core.cpp
+    src/GameData.h
     src/Prison.h
     src/Prison.cpp
     src/Blackout.h
@@ -78,4 +79,5 @@ target_compile_definitions(HighrimTests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_test(NAME HighrimTests COMMAND HighrimTests)
 if(Python3_Interpreter_FOUND)
     add_test(NAME EspTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esp.py")
+    add_test(NAME GameDataTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_game_data.py")
 endif()

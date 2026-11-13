@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Pure rules: no game or SKSE headers, so everything here is unit tested.
 namespace Highrim::Core
@@ -55,6 +56,23 @@ namespace Highrim::Core
     void                    OnComedownDose(ComedownTimers& t, DrugType type, double nowSeconds);  // starts or restarts
     std::optional<DrugType> TakeDueComedown(ComedownTimers& t, double nowSeconds);  // returns one due drug and clears it
     void                    CancelComedowns(ComedownTimers& t);
+
+    // Dose diagnostics: after a dose, the plugin logs the player's active effects at kDiagnosticFirstSeconds and
+    // again at kDiagnosticSecondSeconds of real time. Each pending entry is taken once.
+    inline constexpr double kDiagnosticFirstSeconds = 0.5;
+    inline constexpr double kDiagnosticSecondSeconds = 5.0;
+    struct DiagnosticEntry
+    {
+        DrugType type;
+        double   dueSeconds;
+        int      pass;  // 1 or 2
+    };
+    struct DiagnosticTimers
+    {
+        std::vector<DiagnosticEntry> pending;
+    };
+    void                           ScheduleDiagnostics(DiagnosticTimers& t, DrugType type, double nowSeconds);
+    std::optional<DiagnosticEntry> TakeDueDiagnostic(DiagnosticTimers& t, double nowSeconds);
 
     // Withdrawal application. appliedTier is what the player currently carries (-1 = unknown, e.g. after a
     // load: always re-apply). When change is set, remove every Highrim withdrawal ability, then add the one for

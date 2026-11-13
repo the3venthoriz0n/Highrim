@@ -19,6 +19,7 @@ namespace Highrim::Doses
 
         std::mutex            g_mutex;
         Core::ComedownTimers  g_comedowns{};
+        Core::DiagnosticTimers g_diagnostics{};
         std::optional<double> g_overdoseDue;  // real seconds
 
         double RealSeconds()
@@ -70,6 +71,64 @@ namespace Highrim::Doses
             return std::nullopt;
         }
 
+        std::uint32_t DrugLocalId(Core::DrugType t)
+        {
+            switch (t) {
+            case Core::DrugType::kStimulant: return Forms::HighrimRimerush;
+            case Core::DrugType::kDepressant: return Forms::HighrimVelvetHaze;
+            default: return Forms::HighrimDreamcap;
+            }
+        }
+
+        const char* SafeName(RE::TESForm* form, bool editorId)
+        {
+            if (!form) {
+                return "(none)";
+            }
+            const char* text = editorId ? form->GetFormEditorID() : form->GetName();
+            return (text && *text) ? text : "(unnamed)";
+        }
+
+        // One info line per active effect on the player, then how many of the potion's effects are active.
+        void LogActiveEffects(Core::DrugType type, int pass)
+        {
+            auto* player  = RE::PlayerCharacter::GetSingleton();
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            if (!player || !handler) {
+                return;
+            }
+            auto* potion = handler->LookupForm<RE::AlchemyItem>(DrugLocalId(type), Forms::kPluginName);
+            auto* target = player->AsMagicTarget();
+            auto* list   = target ? target->GetActiveEffectList() : nullptr;
+            spdlog::info("Effects ({}): pass {} for {}", pass == 1 ? "0.5 s" : "5 s", pass, DrugName(type));
+            int active = 0;
+            if (list) {
+                for (auto* ae : *list) {
+                    if (!ae || !ae->effect || !ae->effect->baseEffect) {
+                        continue;
+                    }
+                    auto* base = ae->effect->baseEffect;
+                    const bool off = ae->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled);
+                    spdlog::info("  effect {:08X} {} '{}' mag {:.2f} dur {:.1f} elapsed {:.1f} inactive={} dispelled={}",
+                        base->GetFormID(), SafeName(base, true), SafeName(base, false), ae->magnitude, ae->duration,
+                        ae->elapsedSeconds, ae->flags.any(RE::ActiveEffect::Flag::kInactive),
+                        ae->flags.any(RE::ActiveEffect::Flag::kDispelled));
+                    if (potion && !off) {
+                        for (auto* fx : potion->effects) {
+                            if (fx && fx->baseEffect == base) {
+                                ++active;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                spdlog::warn("  no active effect list on the player");
+            }
+            const int expected = potion ? static_cast<int>(potion->effects.size()) : 0;
+            spdlog::info("Highrim effects active: {} of {} expected for {}", active, expected, DrugName(type));
+        }
+
         void CastComedown(Core::DrugType type)
         {
             auto* player  = RE::PlayerCharacter::GetSingleton();
@@ -111,6 +170,7 @@ namespace Highrim::Doses
 
             std::lock_guard lock(g_mutex);
             Core::OnComedownDose(g_comedowns, type, RealSeconds());
+            Core::ScheduleDiagnostics(g_diagnostics, type, RealSeconds());
             if (r.overdose && settings.overdose && !g_overdoseDue) {
                 g_overdoseDue = RealSeconds() + kOverdoseDelaySeconds;
             }
@@ -159,6 +219,7 @@ namespace Highrim::Doses
     {
         bool                        runOverdose = false;
         std::vector<Core::DrugType> due;
+        std::vector<Core::DiagnosticEntry> diagnostics;
         const bool                  uiBlocked = Blackout::MenuOrPauseActive();
         {
             std::lock_guard lock(g_mutex);
@@ -181,9 +242,15 @@ namespace Highrim::Doses
             while (auto d = Core::TakeDueComedown(g_comedowns, now)) {
                 due.push_back(*d);
             }
+            while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {
+                diagnostics.push_back(*e);
+            }
         }
         for (auto d : due) {
             CastComedown(d);
+        }
+        for (const auto& e : diagnostics) {
+            LogActiveEffects(e.type, e.pass);
         }
         if (runOverdose) {
             spdlog::info("Dose: overdose, starting the blackout");
@@ -195,6 +262,7 @@ namespace Highrim::Doses
     {
         std::lock_guard lock(g_mutex);
         Core::CancelComedowns(g_comedowns);
+        g_diagnostics.pending.clear();
         g_overdoseDue.reset();
     }
 }

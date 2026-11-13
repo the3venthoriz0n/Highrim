@@ -250,6 +250,20 @@ namespace
             CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|1|2").has_value());
         }
 
+        // Dose diagnostics: two log passes per dose (0.5 s and 5 s), each taken once.
+        {
+            DiagnosticTimers d{};
+            CHECK(!TakeDueDiagnostic(d, 1000.0).has_value());
+            ScheduleDiagnostics(d, DrugType::kHallucinogen, 100.0);
+            CHECK(!TakeDueDiagnostic(d, 100.4).has_value());
+            auto first = TakeDueDiagnostic(d, 100.5);
+            CHECK(first.has_value() && first->pass == 1 && first->type == DrugType::kHallucinogen);
+            CHECK(!TakeDueDiagnostic(d, 104.9).has_value());
+            auto second = TakeDueDiagnostic(d, 105.0);
+            CHECK(second.has_value() && second->pass == 2);
+            CHECK(!TakeDueDiagnostic(d, 200.0).has_value());
+        }
+
         // Comedown timers: due 120 s after a dose; a new dose restarts; cancel clears; never fires twice.
         {
             ComedownTimers t{};

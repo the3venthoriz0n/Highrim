@@ -157,6 +157,24 @@ namespace Highrim::Core
         return p;
     }
 
+    void ScheduleDiagnostics(DiagnosticTimers& t, DrugType type, double nowSeconds)
+    {
+        t.pending.push_back({ type, nowSeconds + kDiagnosticFirstSeconds, 1 });
+        t.pending.push_back({ type, nowSeconds + kDiagnosticSecondSeconds, 2 });
+    }
+
+    std::optional<DiagnosticEntry> TakeDueDiagnostic(DiagnosticTimers& t, double nowSeconds)
+    {
+        for (auto it = t.pending.begin(); it != t.pending.end(); ++it) {
+            if (nowSeconds >= it->dueSeconds) {
+                const DiagnosticEntry entry = *it;
+                t.pending.erase(it);
+                return entry;
+            }
+        }
+        return std::nullopt;
+    }
+
     void OnComedownDose(ComedownTimers& t, DrugType type, double nowSeconds)
     {
         const auto i = static_cast<std::size_t>(type);

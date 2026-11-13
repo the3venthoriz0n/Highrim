@@ -11,7 +11,7 @@ Built for the owner's Skyrim Together Reborn (STR) sessions. Everything below is
 - **Overdose blackout:** taking two doses back to back (testing rule) always causes a blackout.
   The player passes out and wakes up:
   - naked, carrying only a **note** that names where their gear is;
-  - somewhere random but **walkable from the gear, still far away** (my call: a few minutes on foot, not across the map);
+  - somewhere random at a **map marker far from the gear** (my call: 15000 to 80000 game units from the prison, which should be a few minutes on foot at most; if no marker is in that band the band widens in two steps, 8000 to 150000 and then anything from 3000 up, so the walk back is not always short);
   - with a **hangover**: lower stamina, occasional blurred vision, a headache (my call: fades over about a game day).
 - The gear is moved into the **hold's own prison chest**, the one vanilla uses when you are jailed, nearest to where the player blacked out.
 - The note names the prison only. **No map marker.**

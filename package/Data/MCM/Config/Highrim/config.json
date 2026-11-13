@@ -1,0 +1,74 @@
+{
+	"modName": "Highrim",
+	"displayName": "Highrim",
+	"minMcmVersion": 9,
+	"cursorFillMode": "topToBottom",
+	"content": [
+		{
+			"text": "Drugs",
+			"type": "header"
+		},
+		{
+			"id": "bEnabled:General",
+			"text": "Enable Highrim",
+			"type": "toggle",
+			"help": "Turn the whole mod on or off.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
+			"id": "bOverdose:General",
+			"text": "Overdose blackout",
+			"type": "toggle",
+			"help": "Two doses back to back make you black out.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
+			"id": "bAddiction:General",
+			"text": "Addiction",
+			"type": "toggle",
+			"help": "Doses build dependency and withdrawal.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
+			"id": "iDoseWindowMinutes:General",
+			"text": "Back to back window",
+			"type": "slider",
+			"help": "Game minutes between doses that count.",
+			"valueOptions": {
+				"min": 5,
+				"max": 240,
+				"step": 5,
+				"formatString": "{0} min",
+				"sourceType": "ModSettingInt"
+			}
+		},
+		{
+			"text": "Debug",
+			"type": "header"
+		},
+		{
+			"id": "bDebug:General",
+			"text": "Debug logging",
+			"type": "toggle",
+			"help": "Extra detail in Highrim.log.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
+			"id": "iDebugBlackoutKey:General",
+			"text": "Test blackout key",
+			"type": "keymap",
+			"help": "Debug: force a blackout. Unbound does nothing.",
+			"valueOptions": {
+				"sourceType": "ModSettingInt"
+			}
+		}
+	]
+}

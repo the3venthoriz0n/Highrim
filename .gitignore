@@ -32,6 +32,6 @@ Thumbs.db
 
 # Build outputs
 dist/
-package/Data/SKSE/Plugins/SleepTogether.dll
+package/Data/SKSE/Plugins/Highrim.dll
 
 .superpowers/

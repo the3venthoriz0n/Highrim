@@ -21,15 +21,12 @@ namespace Highrim::Blackout
         constexpr auto kPollInterval = std::chrono::milliseconds(100);
         constexpr auto kFadeOutTime  = std::chrono::milliseconds(1500);
         constexpr auto kBlackTime    = std::chrono::milliseconds(2000);
-        constexpr float kMinWakeDistance = 8000.0f;
-        constexpr float kMaxWakeDistance = 30000.0f;
 
         // Vanilla image space modifiers (Skyrim.esm, confirmed by parsing it).
         constexpr RE::FormID kFadeToBlack     = 0x000F756D;
         constexpr RE::FormID kFadeToBlackHold = 0x000F756E;
         constexpr RE::FormID kFadeToBlackBack = 0x000F756F;
-        constexpr RE::FormID kTamriel         = 0x0000003C;
-
+        
         std::atomic_bool g_started{ false };
         std::atomic_bool g_taskPending{ false };
 
@@ -241,179 +238,71 @@ namespace Highrim::Blackout
             std::vector<Moved>  moved;
             RE::TESObjectREFR*  chest = nullptr;
             try {
-                // Step 2: the hold whose prison is nearest the player.
+                // Step 2: the hold whose prison is nearest the player (or whose capital the player is in).
                 spdlog::info("Blackout: step 2: choosing the nearest hold prison");
-                std::optional<Prison::Anchor> here = Prison::ExteriorAnchor(player);
-                if (here) {
-                    spdlog::info("Blackout: step 2: player anchor ({:.0f},{:.0f}) from {}", here->x, here->y, here->how);
+                const auto place = Prison::LocatePlayer(player);
+                if (place.tamriel) {
+                    spdlog::info("Blackout: step 2: player in worldspace {:08X}, Tamriel position ({:.0f},{:.0f}); {}", place.world,
+                        place.tamriel->x, place.tamriel->y, place.how);
                 } else {
-                    const auto ext = player->GetPlayerRuntimeData().exteriorPosition;
-                    here           = Prison::Anchor{ ext.x, ext.y, nullptr, "player last exteriorPosition" };
-                    spdlog::info("Blackout: step 2: player anchor ({:.0f},{:.0f}) from {} (worldspace unknown)", ext.x, ext.y, here->how);
+                    spdlog::warn("Blackout: step 2: player in worldspace {:08X}, no Tamriel position; {}", place.world, place.how);
                 }
 
-                auto* tamriel = RE::TESForm::LookupByID<RE::TESWorldSpace>(kTamriel);
-                RE::TESWorldSpace* playerWorld = here->world ? here->world : tamriel;
-
-                // Parent chains of every worldspace involved, for the "same space / child of" decisions.
-                Core::WorldParents parents;
-                auto addChain = [&](RE::TESWorldSpace* w) {
-                    for (int i = 0; w && i < 16; ++i) {
-                        auto* p = w->parentWorld;
-                        parents[w->GetFormID()] = p ? p->GetFormID() : 0u;
-                        w = p;
-                    }
-                };
-                addChain(playerWorld);
-
-                struct Candidate
-                {
-                    Prison::Resolved r;
-                    Prison::Anchor   anchor;
-                };
-                struct Pending
-                {
-                    Prison::Resolved              r;
-                    std::optional<Prison::Anchor> jailAnchor;
-                };
-                std::vector<Pending> pending;
+                std::vector<Prison::Resolved> resolved;
                 for (const auto& def : Prison::Holds()) {
-                    auto r = Prison::Resolve(def);
-                    if (!r.chest) {
-                        spdlog::info("Blackout: step 2: {} skipped, no confiscation chest", def.name);
+                    resolved.push_back(Prison::Resolve(def));
+                }
+                const auto holdInfos  = Prison::HoldInfos(resolved);
+                const auto worldHolds = Prison::WorldHolds();
+                for (std::size_t i = 0; i < resolved.size(); ++i) {
+                    if (!holdInfos[i].hasChest) {
+                        spdlog::info("Blackout: step 2: {} is not a candidate ({})", resolved[i].def->name,
+                            resolved[i].chest ? "no Tamriel anchor in GameData.h" : "no confiscation chest");
                         continue;
                     }
-                    std::optional<Prison::Anchor> a = r.jail ? Prison::ExteriorAnchor(r.jail) : std::nullopt;
-                    if (a) {
-                        addChain(a->world);
-                    }
-                    pending.push_back({ std::move(r), std::move(a) });
+                    const float d = place.tamriel ? std::hypot(holdInfos[i].anchor.x - place.tamriel->x, holdInfos[i].anchor.y - place.tamriel->y) : -1.0f;
+                    spdlog::info("Blackout: step 2: candidate {} anchor ({:.0f},{:.0f}), {:.0f} units from the player", resolved[i].def->name,
+                        holdInfos[i].anchor.x, holdInfos[i].anchor.y, d);
                 }
-
-                // The space to compare in: the root of the player's worldspace (normally Tamriel).
-                const std::uint32_t playerWorldId = playerWorld ? playerWorld->GetFormID() : 0u;
-                const std::uint32_t spaceId       = Core::WorldRoot(playerWorldId, parents);
-                auto* space = spaceId == playerWorldId ? playerWorld : RE::TESForm::LookupByID<RE::TESWorldSpace>(spaceId);
-                if (spaceId != playerWorldId) {
-                    // The player is inside a city worldspace: stand in for them with the capital's marker in the parent space.
-                    std::optional<Prison::Anchor> mapped;
-                    for (const auto& p : pending) {
-                        if (p.jailAnchor && p.jailAnchor->world == playerWorld) {
-                            for (const auto& m : Prison::WorldMarkers(space)) {
-                                if (_stricmp(m.name.c_str(), p.r.def->capital) == 0) {
-                                    mapped = Prison::Anchor{ m.x, m.y, space,
-                                        std::string("map marker of ") + p.r.def->capital + " in the parent worldspace" };
-                                    break;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    if (mapped) {
-                        spdlog::info("Blackout: step 2: player is in worldspace {:08X}, a child of {:08X}; using {} at ({:.0f},{:.0f})",
-                            playerWorldId, spaceId, mapped->how, mapped->x, mapped->y);
-                        here = std::move(mapped);
-                    } else {
-                        spdlog::warn("Blackout: step 2: player is in child worldspace {:08X} but no capital marker was found in {:08X}; "
-                                     "comparing inside the child worldspace only", playerWorldId, spaceId);
-                        space = playerWorld;
-                    }
-                }
-                RE::TESWorldSpace* world   = space ? space : tamriel;
-                const std::uint32_t worldId = world ? world->GetFormID() : 0u;
-                auto                markers = Prison::WorldMarkers(world);
-                spdlog::info("Blackout: step 2: comparing in worldspace {:08X}, which has {} map markers", worldId, markers.size());
-
-                std::vector<Candidate>   candidates;
-                std::vector<Core::Point> points;
-                for (auto& p : pending) {
-                    const auto& def           = *p.r.def;
-                    auto        capitalMarker = [&](const std::string& why) -> std::optional<Prison::Anchor> {
-                        for (const auto& m : markers) {
-                            if (_stricmp(m.name.c_str(), def.capital) == 0) {
-                                return Prison::Anchor{ m.x, m.y, world, std::string("map marker of ") + def.capital + " (" + why + ")" };
-                            }
-                        }
-                        return std::nullopt;
-                    };
-                    std::optional<Prison::Anchor> a;
-                    if (!p.jailAnchor) {
-                        a = capitalMarker("fallback, no jail anchor");
-                        if (!a) {
-                            spdlog::info("Blackout: step 2: {} skipped, no exterior anchor for its prison", def.name);
-                            continue;
-                        }
-                    } else {
-                        const auto jailWorldId = p.jailAnchor->world ? p.jailAnchor->world->GetFormID() : 0u;
-                        switch (Core::ClassifyAnchorSpace(jailWorldId, worldId, parents)) {
-                        case Core::AnchorSpace::kSame:
-                            a = p.jailAnchor;
-                            break;
-                        case Core::AnchorSpace::kChild:
-                            a = capitalMarker(std::format("jail is in city worldspace {:08X}, capital marker used", jailWorldId));
-                            if (!a) {
-                                spdlog::info("Blackout: step 2: {} skipped, jail is in city worldspace {:08X} and the capital has no marker in {:08X}",
-                                    def.name, jailWorldId, worldId);
-                                continue;
-                            }
-                            break;
-                        default:
-                            spdlog::info("Blackout: step 2: {} skipped, prison anchor is in unrelated worldspace {:08X}", def.name, jailWorldId);
-                            continue;
-                        }
-                    }
-                    spdlog::info("Blackout: step 2: candidate {} anchor ({:.0f},{:.0f}) via {}", def.name, a->x, a->y, a->how);
-                    points.push_back({ a->x, a->y });
-                    candidates.push_back({ std::move(p.r), std::move(*a) });
-                }
-                const auto nearest = Core::NearestIndex({ here->x, here->y }, points);
-                if (!nearest) {
+                const auto choice = Core::ChooseHold(holdInfos, worldHolds, place.world, place.tamriel);
+                if (!choice) {
                     Abort("no hold prison with a chest could be located");
                     return;
                 }
-                const auto& hold = candidates[*nearest];
-                chest            = hold.r.chest;
-                spdlog::info("Blackout: step 2: chose {} (chest {:08X} via {})", hold.r.def->name, chest->GetFormID(), hold.r.chestSource);
+                const auto& hold = resolved[choice->index];
+                const auto  anchor = holdInfos[choice->index].anchor;
+                chest            = hold.chest;
+                spdlog::info("Blackout: step 2: chose {} ({}; chest {:08X} via {}; prison anchor ({:.0f},{:.0f}))", hold.def->name,
+                    choice->reason == Core::HoldReason::kCapitalWorld ? "the player is in its capital worldspace" : "nearest by Tamriel position",
+                    chest->GetFormID(), hold.chestSource, anchor.x, anchor.y);
 
-                // Step 5 (done before any item moves, so a failure here costs nothing): a wake spot.
-                spdlog::info("Blackout: step 5: picking a wake spot {:.0f} to {:.0f} units from the prison", kMinWakeDistance, kMaxWakeDistance);
-                std::vector<Core::Point>        spotPoints;
-                std::vector<RE::TESObjectREFR*> spotRefs;
-                for (const auto& m : markers) {
-                    if (m.visible && m.ref) {
-                        spotPoints.push_back({ m.x, m.y });
-                        spotRefs.push_back(m.ref);
-                    }
-                }
-                std::string spotSource = "persistent-cell map markers (visible flag)";
-                spdlog::info("Blackout: step 5: {} visible markers from the worldspace persistent cell", spotRefs.size());
-                if (spotRefs.empty()) {
-                    spotSource = "player currentMapMarkers";
-                    for (auto& handle : player->GetPlayerRuntimeData().currentMapMarkers) {
-                        if (auto ref = handle.get()) {
-                            auto* extra = ref->extraList.GetByType<RE::ExtraMapMarker>();
-                            if (extra) {
-                                const auto pos = ref->GetPosition();
-                                spotPoints.push_back({ pos.x, pos.y });
-                                spotRefs.push_back(ref.get());
-                            }
-                        }
-                    }
-                    spdlog::info("Blackout: step 5: {} markers from player currentMapMarkers", spotRefs.size());
+                // Step 5 (done before any item moves, so a failure here costs nothing): a wake spot, from every Tamriel
+                // map marker, in widening distance bands from the prison.
+                spdlog::info("Blackout: step 5: picking a wake spot from all Tamriel map markers");
+                const auto markers = Prison::CollectWakeMarkers();
+                spdlog::info("Blackout: step 5: {} markers: table {} of {} resolved, {} read live from the persistent cell ({} not in the table), "
+                             "{} skipped without a cell, {} moved from the table position",
+                    markers.usable.size(), markers.tableFound, markers.tableTotal, markers.liveFound, markers.liveExtra, markers.noCell,
+                    markers.moved);
+                std::vector<Core::Point> spotPoints;
+                for (const auto& m : markers.usable) {
+                    spotPoints.push_back({ m.x, m.y });
                 }
                 static std::mt19937 rng{ std::random_device{}() };
                 const float         roll = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
-                const auto spot = Core::PickWakeSpot(spotPoints, { hold.anchor.x, hold.anchor.y }, kMinWakeDistance, kMaxWakeDistance, roll);
+                const auto          spot = Core::PickWakeSpotStaged(spotPoints, anchor, roll);
                 if (!spot) {
-                    Abort("no wake spot between 8000 and 30000 units from the prison");
+                    Abort("no wake spot at least 3000 units from the prison among " + std::to_string(markers.usable.size()) + " map markers");
                     return;
                 }
-                RE::TESObjectREFR* spotRef = spotRefs[*spot];
-                spdlog::info("Blackout: step 5: wake spot marker {:08X} at ({:.0f},{:.0f}) from {}", spotRef->GetFormID(),
-                    spotPoints[*spot].x, spotPoints[*spot].y, spotSource);
+                RE::TESObjectREFR* spotRef = markers.usable[spot->index].ref;
+                spdlog::info("Blackout: step 5: stage {} ({}), {} candidate(s) in the band; wake spot marker {:08X} at ({:.0f},{:.0f}), {:.0f} units "
+                             "from the prison anchor ({:.0f},{:.0f})",
+                    spot->stage, spot->stage == 1 ? "15000-80000" : spot->stage == 2 ? "8000-150000" : "3000-unbounded", spot->inBand,
+                    spotRef->GetFormID(), spotPoints[spot->index].x, spotPoints[spot->index].y, spot->distance, anchor.x, anchor.y);
 
                 // Step 3 and 4: the chest, then the items.
-                spdlog::info("Blackout: step 3: using chest {:08X} ({})", chest->GetFormID(), hold.r.def->name);
+                spdlog::info("Blackout: step 3: using chest {:08X} ({})", chest->GetFormID(), hold.def->name);
                 auto chestBefore = chest->GetInventoryCounts();
                 spdlog::info("Blackout: step 3: chest holds {} item types before", chestBefore.size());
 
@@ -484,7 +373,8 @@ namespace Highrim::Blackout
                 }
 
                 // Step 6: teleport, note, hangover, time.
-                spdlog::info("Blackout: step 6: teleporting to marker {:08X}", spotRef->GetFormID());
+                spdlog::info("Blackout: step 6: teleporting to marker {:08X} (cell {})", spotRef->GetFormID(),
+                    spotRef->GetParentCell() ? "attached" : "not attached, the saved cell is used by the engine");
                 const auto before = player->GetPosition();
                 player->MoveTo(spotRef);
                 const auto after = player->GetPosition();
@@ -492,13 +382,13 @@ namespace Highrim::Blackout
                     after.x, after.y, after.z);
 
                 auto* handler = RE::TESDataHandler::GetSingleton();
-                auto* note    = handler ? handler->LookupForm<RE::TESBoundObject>(hold.r.def->noteLocalId, Forms::kPluginName) : nullptr;
+                auto* note    = handler ? handler->LookupForm<RE::TESBoundObject>(hold.def->noteLocalId, Forms::kPluginName) : nullptr;
                 if (note) {
                     player->AddObjectToContainer(note, nullptr, 1, nullptr);
                     spdlog::info("Blackout: step 6: note given ({}), player now has {}; text: {}", note->GetName(), CountIn(player, note),
-                        Core::NoteText(std::string(hold.r.def->name) + " prison"));
+                        Core::NoteText(std::string(hold.def->name) + " prison"));
                 } else {
-                    spdlog::error("Blackout: step 6: note for {} not found in {}", hold.r.def->name, Forms::kPluginName);
+                    spdlog::error("Blackout: step 6: note for {} not found in {}", hold.def->name, Forms::kPluginName);
                 }
 
                 if (auto* calendar = RE::Calendar::GetSingleton(); calendar && calendar->gameHour && calendar->gameDaysPassed) {

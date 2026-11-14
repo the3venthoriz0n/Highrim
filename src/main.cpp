@@ -53,7 +53,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
     SKSE::Init(a_skse);
     SetupLog();
-    spdlog::info("Highrim 0.2.0 loading");
+    spdlog::info("Highrim 0.2.1 loading");
 
     Highrim::Config::Load();
     if (Highrim::Config::Get().debug) {

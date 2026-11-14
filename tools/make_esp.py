@@ -27,6 +27,8 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
         HighrimAbShakySpeech / AbShakySneak         Speech / Sneak -999 while high
         HighrimAbSkill<Skill>                       18 withdrawal effects, one per skill (tier penalty -10 / -20 / -30)
         HighrimAbOverdose<Low|Elevated|High>        the harmless effect (magnitude 0) of the three Overdose Risk abilities (Task 16)
+        HighrimFxAllSkillsUp / AbAllSkillsUp / AbAllSkillsDown   Task 17: the one visible "All Skills Boosted" / "All Skills Reduced"
+                                                    line that stands for the 54 hidden per-skill effects (Hide in UI flag)
   SPEL  HighrimShaky                                "Shaky and Suspicious": Speech and Sneak 0 while high
         HighrimAddicted<Rimerush|VelvetHaze|Dreamcap>   "Addicted: <drug>" abilities (dependency level 10 or more)
         HighrimOverdose<Low|Elevated|High>          "Overdose Risk: <tier>" abilities, one at a time while the dose total is inside the window
@@ -113,6 +115,13 @@ OVERDOSE_IMOD_SECONDS = 4.0     # the vanilla record runs 1 s; the plugin re-tri
 OVERDOSE_TINT_ALPHA = 0.35      # the vanilla peak tint alpha is 0.098, too faint at strength 0.4: raised (unverified in game)
 COMEDOWN_IMOD_SECONDS = 60.0  # duration written into the comedown IMAD (the plugin also stops it by itself)
 ACTOR_VALUE_CARRY_WEIGHT = 32
+# Task 17: the Hide in UI flag of a magic effect (EffectSetting::EffectSettingData::Flag::kHideInUI = 1 << 15). Checked
+# against Skyrim.esm: 170 vanilla effects have it (MS04RewardEffectNoDisplay, AbVampireDamageHealth ...); bit 18 (0x40000)
+# is only set on the Bound weapon effects. Whether the game really leaves flagged effects out of tooltips is unverified.
+MGEF_HIDE_IN_UI = 0x00008000
+# The descriptor effects need a magnitude (the buff / penalty, for <mag> in the text) but no gameplay: they change
+# Variable10 (actor value 77), which no vanilla magic effect uses (Skyrim.esm checked: Variable01..10 never appear).
+ACTOR_VALUE_VARIABLE10 = 77
 ACTOR_VALUE_HEALTH, ACTOR_VALUE_MAGICKA, ACTOR_VALUE_STAMINA = 24, 25, 26
 
 # Template form IDs (see tools/extract_templates.py).
@@ -176,6 +185,9 @@ DRUG_NAMES = {"Rimerush": "Rimerush", "VelvetHaze": "Velvet Haze", "Dreamcap": "
 ADDICTED_TEXT = "You depend on {drug}. Without it you will go into withdrawal after about 4 hours."
 HIGHLY_ADDICTIVE_TEXT = ("This drug is highly addictive. Taking it builds dependency, and withdrawal follows when you "
                          "stop.")
+
+ALL_SKILLS_UP_TEXT = "All of your skills are increased by <mag> while Rimerush lasts."
+ALL_SKILLS_DOWN_TEXT = "All of your skills are reduced by <mag> while you are in withdrawal."
 
 # (EDID, name, description, template, overrides)
 MGEFS = [
@@ -241,16 +253,26 @@ MGEFS = [
      {"av": ACTOR_VALUE_MAGICKA}),
 ] + [
     (rush_skill_edid(name, "Fx"), f"Rush {name}", f"{name} is increased by <mag> points for <dur> seconds.", T_FORT_STAMINA,
-     {"av": av, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]})
+     {"av": av, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL], "hide": True})
     for name, av in SKILLS
 ] + [
-    (rush_skill_edid(name, "Ab"), f"Surge {name}", f"{name} is increased by <mag> points.", T_AB_FORT_STAMINA, {"av": av})
+    (rush_skill_edid(name, "Ab"), f"Surge {name}", f"{name} is increased by <mag> points.", T_AB_FORT_STAMINA,
+     {"av": av, "hide": True})
     for name, av in SKILLS
 ] + [
     # One per skill, used by all three withdrawal abilities (the magnitude is the tier's penalty).
     (skill_edid(name), f"Withdrawal: {name}", f"{name} is changed by <mag> while you are in withdrawal.",
-     T_AB_FORT_STAMINA, {"av": av})
+     T_AB_FORT_STAMINA, {"av": av, "hide": True})
     for name, av in SKILLS
+] + [
+    # Task 17: one visible descriptor per group of hidden per-skill effects (potion and ability versions are separate
+    # clones, like every other Fx / Ab pair). The magnitude of the effect is the buff or penalty, for <mag> in the text.
+    ("HighrimFxAllSkillsUp", "All Skills Boosted", ALL_SKILLS_UP_TEXT, T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_VARIABLE10, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
+    ("HighrimAbAllSkillsUp", "All Skills Boosted", ALL_SKILLS_UP_TEXT, T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_VARIABLE10, "show": True}),
+    ("HighrimAbAllSkillsDown", "All Skills Reduced", ALL_SKILLS_DOWN_TEXT, T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_VARIABLE10, "show": True}),
 ] + [
     # Task 16: the three Overdose Risk abilities carry one harmless effect each (carry weight, magnitude 0): an ability needs
     # an effect to be listed in Active Effects. The effect text is the plain description.
@@ -267,6 +289,7 @@ PLAIN = {
     "HighrimAbHealRateDown": "Health regenerates <neg>% slower.",
     "HighrimAbSlow": "Movement is <neg>% slower.",
 }
+PLAIN["HighrimAbAllSkillsDown"] = "All of your skills are reduced by <neg> while you are in withdrawal."
 PLAIN.update({skill_edid(name): f"{name} is reduced by <neg> while you are in withdrawal." for name, _ in SKILLS})
 
 
@@ -285,7 +308,8 @@ STACKS = [
     ("HighrimStackRimerush", "Rimerush Surge",
      [("HighrimAbHealthUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
       ("HighrimAbMagickaUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
-      ("HighrimAbStaminaUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3)))]
+      ("HighrimAbStaminaUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
+      ("HighrimAbAllSkillsUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3)))]
      + [(rush_skill_edid(name, "Ab"), tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))) for name, _ in SKILLS]),
     ("HighrimStackVelvetHaze", "Velvet Haze Weight",
      [("HighrimAbHealRateUp", VELVET_STACK_REGEN), ("HighrimAbCarryUp", VELVET_STACK_CARRY),
@@ -307,7 +331,8 @@ def stack_spell_defs():
 
 
 def skill_effects(tier):
-    return [effect(fx(skill_edid(name)), WITHDRAWAL_SKILL_PENALTY[tier], 0) for name, _ in SKILLS]
+    """The visible descriptor, then the 18 hidden per-skill effects (all four carry the tier's penalty)."""
+    return [effect(fx("HighrimAbAllSkillsDown"), WITHDRAWAL_SKILL_PENALTY[tier], 0)] + [effect(fx(skill_edid(name)), WITHDRAWAL_SKILL_PENALTY[tier], 0) for name, _ in SKILLS]
 
 
 def spell_defs():
@@ -356,7 +381,8 @@ def drug_defs():
         ("HighrimRimerush", "Rimerush", 60,
          [effect(fx("HighrimFxRushHealth"), RIMERUSH_BUFF, high),
           effect(fx("HighrimFxRushMagicka"), RIMERUSH_BUFF, high),
-          effect(fx("HighrimFxRimerushStamina"), RIMERUSH_BUFF, high)]
+          effect(fx("HighrimFxRimerushStamina"), RIMERUSH_BUFF, high),
+          effect(fx("HighrimFxAllSkillsUp"), RIMERUSH_BUFF, high)]
          + [effect(fx(rush_skill_edid(name, "Fx")), RIMERUSH_BUFF, high) for name, _ in SKILLS]
          + [effect(fx("HighrimFxHighlyAddictive"), 0, high)]),
         ("HighrimVelvetHaze", "Velvet Haze", 55,
@@ -471,6 +497,7 @@ def patch(data, offset, fmt, value):
     return data[:offset] + struct.pack(fmt, value) + data[offset + size:]
 
 
+MGEF_FLAGS_OFFSET = 0
 MGEF_ASSOC_OFFSET = 8     # associated item (keyword) in MGEF DATA
 MGEF_AV_OFFSET = 68       # actor value in MGEF DATA (follows archetype at 64)
 
@@ -487,6 +514,10 @@ def build_mgef(edid, name, description, key, overrides):
         data = patch(data, MGEF_ASSOC_OFFSET, "<I", overrides["assoc"])
     if "av" in overrides:
         data = patch(data, MGEF_AV_OFFSET, "<I", overrides["av"])
+    if overrides.get("hide"):
+        data = patch(data, MGEF_FLAGS_OFFSET, "<I", struct.unpack_from("<I", data, MGEF_FLAGS_OFFSET)[0] | MGEF_HIDE_IN_UI)
+    if overrides.get("show"):  # the AbFortifyStamina template already has Hide in UI set: clear it for a visible descriptor
+        data = patch(data, MGEF_FLAGS_OFFSET, "<I", struct.unpack_from("<I", data, MGEF_FLAGS_OFFSET)[0] & ~MGEF_HIDE_IN_UI)
     replace(subs, "DATA", data)
     if "keywords" in overrides:
         set_keywords(subs, overrides["keywords"])
@@ -518,17 +549,8 @@ def spell_description(effects):
     rush_ids = {ids[rush_skill_edid(name, "Ab")] for name, _ in SKILLS}
     parts = []
     for item in effects:
-        if item["mgef"] in rush_ids:
-            text = f"All skills are increased by {item['mag']:g}."
-            if text not in parts:
-                parts.append(text)
-            continue
-        if item["mgef"] in skill_ids:
-            # 18 near-identical lines would bury the tooltip: one sentence for all skills (the penalty is the same).
-            text = f"All skills are reduced by {abs(item['mag']):g} while you are in withdrawal."
-            if text not in parts:
-                parts.append(text)
-            continue
+        if item["mgef"] in rush_ids or item["mgef"] in skill_ids:
+            continue  # hidden in the UI: the descriptor effect ("All Skills Boosted / Reduced") says it once
         text = texts.get(item["mgef"], "")
         text = (text.replace("<neg>", f"{abs(item['mag']):g}").replace("<mag>", f"{item['mag']:g}")
                 .replace("<dur>", str(item["dur"])).replace("<area>", str(item["area"])))

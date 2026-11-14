@@ -53,7 +53,8 @@ EXPECTED_EDIDS = {
         "HighrimFxRushHealth", "HighrimFxRushMagicka", "HighrimAbHealthUp", "HighrimAbMagickaUp",
     ] + ["HighrimFxRushSkill" + name for name in SKILL_NAMES] + ["HighrimAbRushSkill" + name for name in SKILL_NAMES]
     + ["HighrimAbSkill" + name for name in SKILL_NAMES]
-    + ["HighrimAbOverdose" + tier for tier in ("Low", "Elevated", "High")],
+    + ["HighrimAbOverdose" + tier for tier in ("Low", "Elevated", "High")]
+    + ["HighrimFxAllSkillsUp", "HighrimAbAllSkillsUp", "HighrimAbAllSkillsDown"],
     "SPEL": [
         "HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
         "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3",
@@ -431,7 +432,7 @@ class EspTests(unittest.TestCase):
         self.assertEqual(text("HighrimComedownRimerush", "DESC"), "Stamina regenerates 60% slower for 60 seconds.")
         self.assertEqual(text("HighrimComedownVelvetHaze", "DESC"), "Stamina regenerates 40% slower for 60 seconds.")
         self.assertEqual(text("HighrimWithdrawal1", "DESC"),
-                         "Stamina regenerates 20% slower. All skills are reduced by 10 while you are in withdrawal.")
+                         "Stamina regenerates 20% slower. All of your skills are reduced by 10 while you are in withdrawal.")
         self.assertIn("25 points lower", text("HighrimWithdrawal2", "DESC"))
         self.assertIn("Health regenerates 50% slower", text("HighrimWithdrawal3", "DESC"))
         self.assertIn("Lasts one game day", text("HighrimHangover", "DESC"))
@@ -622,7 +623,8 @@ class EspTests(unittest.TestCase):
         def mags(edid):
             return [struct.unpack("<f", e[:4])[0] for e in self.edid[edid].get("EFIT")]
         # Task 15: Rimerush is +10 Health, Magicka, Stamina and 18 skills, plus the highly addictive descriptor
-        self.assertEqual(mags("HighrimRimerush"), [10.0] * 21 + [0.0])
+        # bars, descriptor (mag = the buff), 18 hidden skills, highly addictive
+        self.assertEqual(mags("HighrimRimerush"), [10.0] * 22 + [0.0])
         self.assertEqual(mags("HighrimVelvetHaze"), [27.0, 500.0, 150.0, 0.0, 0.0])  # slow, regen, carry, invisible, descriptor
 
     # --- Task 14 -----------------------------------------------------------------------------
@@ -652,7 +654,7 @@ class EspTests(unittest.TestCase):
             self.assertIn(name.encode("ascii"), mgef.first("DNAM"))
             self.assertIn(b"withdrawal", mgef.first("DNAM"))
         text = self.edid["HighrimWithdrawal2"].first("DESC").rstrip(bytes(1)).decode("ascii")
-        self.assertIn("All skills are reduced by 20", text)
+        self.assertIn("All of your skills are reduced by 20 while you are in withdrawal.", text)
 
     def test_shaky_and_suspicious_zeroes_speech_and_sneak(self):
         spell = self.edid["HighrimShaky"]
@@ -671,10 +673,12 @@ class EspTests(unittest.TestCase):
     def test_rimerush_potion_buffs_bars_and_all_skills(self):
         by_id = {r.formid: r for r in self.plugin.records}
         fx = self.effects_of("HighrimRimerush")
-        self.assertEqual(len(fx), 22)
-        self.assertEqual(len({f for f, _ in fx}), 22, "each effect once")
+        self.assertEqual(len(fx), 23, "3 bars, descriptor, 18 hidden skills, highly addictive")
+        self.assertEqual(len({f for f, _ in fx}), 23, "each effect once")
         avs = {}
         for f, (mag, area, dur) in fx[:-1]:
+            if f == self.edid["HighrimFxAllSkillsUp"].formid:
+                continue
             data = by_id[f].first("DATA")
             self.assertEqual(struct.unpack_from("<I", data, 64)[0], 34, "value modifier")
             self.assertEqual((mag, dur), (10.0, 120))
@@ -691,14 +695,108 @@ class EspTests(unittest.TestCase):
         by_id = {r.formid: r for r in self.plugin.records}
         for n in (1, 2, 3):
             fx = self.effects_of(f"HighrimStackRimerush{n}")
-            self.assertEqual(len(fx), 21)
+            self.assertEqual(len(fx), 22, "3 bars, descriptor, 18 hidden skills")
             avs = set()
             for f, (mag, area, dur) in fx:
                 self.assertEqual((mag, dur), (5.0 * n, 0))
+                if f == self.edid["HighrimAbAllSkillsUp"].formid:
+                    continue
                 avs.add(struct.unpack_from("<I", by_id[f].first("DATA"), 68)[0])
             self.assertEqual(avs, {24, 25, 26} | set(range(6, 24)))
             desc = self.edid[f"HighrimStackRimerush{n}"].first("DESC").decode("ascii")
-            self.assertIn(f"All skills are increased by {5 * n}.", desc)
+            self.assertIn(f"All of your skills are increased by {5 * n} while Rimerush lasts.", desc)
+
+    # --- Task 17: dense effect lists ------------------------------------------------------------
+    HIDE_IN_UI = 0x00008000   # EffectSetting::EffectSettingData::Flag::kHideInUI (1 << 15); read from Skyrim.esm, see below
+
+    def mgef_flags(self, edid):
+        return struct.unpack_from("<I", self.edid[edid].first("DATA"), 0)[0]
+
+    def per_skill_mgefs(self):
+        return (["HighrimFxRushSkill" + n for n in SKILL_NAMES] + ["HighrimAbRushSkill" + n for n in SKILL_NAMES]
+                + ["HighrimAbSkill" + n for n in SKILL_NAMES])
+
+    def test_hide_in_ui_is_set_on_exactly_the_per_skill_effects(self):
+        hidden = {r.edid for r in self.plugin.by_type("MGEF") if struct.unpack_from("<I", r.first("DATA"), 0)[0] & self.HIDE_IN_UI}
+        # The constant-effect (ability) template AbFortifyStamina already has Hide in UI set, so every HighrimAb* effect is
+        # hidden except the two ability descriptors, whose flag the generator clears. Of the potion effects (Fx) exactly
+        # the 18 per-skill ones are flagged.
+        descriptors = {"HighrimAbAllSkillsUp", "HighrimAbAllSkillsDown"}
+        ability_effects = {r.edid for r in self.plugin.by_type("MGEF") if r.edid.startswith("HighrimAb")} - descriptors
+        # (HighrimFxVelvetSlow is cloned from the vanilla sap slow effect, which has the flag too: not touched by Task 17.)
+        self.assertEqual(hidden, set(self.per_skill_mgefs()) | ability_effects | {"HighrimFxVelvetSlow"})
+        self.assertEqual({e for e in hidden if e.startswith("HighrimFx")},
+                         {"HighrimFxRushSkill" + n for n in SKILL_NAMES} | {"HighrimFxVelvetSlow"})
+        self.assertTrue(set(self.per_skill_mgefs()) <= hidden and len(self.per_skill_mgefs()) == 54)
+        for edid in ("HighrimFxAllSkillsUp", "HighrimAbAllSkillsUp",
+                     "HighrimAbAllSkillsDown", "HighrimFxHighlyAddictive", "HighrimFxRushHealth"):
+            self.assertFalse(self.mgef_flags(edid) & self.HIDE_IN_UI, edid)
+
+    @unittest.skipUnless(os.path.exists(SKYRIM_ESM), "Skyrim.esm not found")
+    def test_hide_in_ui_flag_value_matches_vanilla(self):
+        # Vanilla effects that are hidden in the UI (MS04RewardEffectNoDisplay, AbVampireDamageHealth) have bit 15 set;
+        # bit 18 (0x40000, the value the task brief guessed) is only set on Bound weapon effects.
+        import zlib
+        data = read_bytes(SKYRIM_ESM)
+        pos = 24 + struct.unpack_from("<I", data, 4)[0]
+        found = {}
+        while pos < len(data):
+            sig = data[pos:pos + 4]
+            size = struct.unpack_from("<I", data, pos + 4)[0]
+            if sig == b"GRUP":
+                pos += 24
+                continue
+            if sig == b"MGEF":
+                flags = struct.unpack_from("<I", data, pos + 8)[0]
+                body = data[pos + 24:pos + 24 + size]
+                if flags & 0x40000:
+                    body = zlib.decompress(body[4:])
+                subs = dict(Plugin.split_subrecords(body))
+                if subs["EDID"][:-1] in (b"MS04RewardEffectNoDisplay", b"AbVampireDamageHealth", b"BoundSwordFFSelf"):
+                    found[subs["EDID"][:-1].decode()] = struct.unpack_from("<I", subs["DATA"], 0)[0]
+            pos += 24 + size
+        self.assertTrue(found["MS04RewardEffectNoDisplay"] & self.HIDE_IN_UI)
+        self.assertTrue(found["AbVampireDamageHealth"] & self.HIDE_IN_UI)
+        self.assertFalse(found["BoundSwordFFSelf"] & self.HIDE_IN_UI)
+        self.assertTrue(found["BoundSwordFFSelf"] & 0x40000)
+
+    def test_descriptors_exist_once_and_have_no_gameplay_effect(self):
+        up = b"All of your skills are increased by <mag> while Rimerush lasts."
+        down = b"All of your skills are reduced by <mag> while you are in withdrawal."
+        for edid, name, text in (("HighrimFxAllSkillsUp", b"All Skills Boosted", up),
+                                 ("HighrimAbAllSkillsUp", b"All Skills Boosted", up),
+                                 ("HighrimAbAllSkillsDown", b"All Skills Reduced", down)):
+            rec = self.edid[edid]
+            self.assertEqual(rec.first("FULL"), name + bytes(1))
+            self.assertEqual(rec.first("DNAM"), text + bytes(1))
+            av = struct.unpack_from("<I", rec.first("DATA"), 68)[0]
+            self.assertEqual(av, 77, "Variable10: no vanilla magic effect uses it, no skill, bar or stat")
+        self.assertEqual(self.mgef_flags("HighrimAbAllSkillsDown") & 0x5, 0, "not hostile or detrimental")
+
+    def visible(self, edid):
+        by_id = {r.formid: r for r in self.plugin.records}
+        out = []
+        for f, _ in self.effects_of(edid):
+            rec = by_id.get(f)
+            hidden = rec is not None and struct.unpack_from("<I", rec.first("DATA"), 0)[0] & self.HIDE_IN_UI
+            if not hidden:
+                out.append(f)
+        return out
+
+    def test_descriptor_is_listed_once_and_visible_lists_are_short(self):
+        fx = lambda e: self.edid[e].formid
+        self.assertEqual(self.visible("HighrimRimerush"), [fx("HighrimFxRushHealth"), fx("HighrimFxRushMagicka"),
+                         fx("HighrimFxRimerushStamina"), fx("HighrimFxAllSkillsUp"), fx("HighrimFxHighlyAddictive")])
+        self.assertEqual([m for f, (m, _, _) in self.effects_of("HighrimRimerush") if f == fx("HighrimFxAllSkillsUp")], [10.0])
+        for n in (1, 2, 3):
+            self.assertEqual([f for f, _ in self.effects_of(f"HighrimStackRimerush{n}")].count(fx("HighrimAbAllSkillsUp")), 1)
+            self.assertEqual(self.visible(f"HighrimStackRimerush{n}"), [fx("HighrimAbAllSkillsUp")])
+            down = [m for f, (m, _, _) in self.effects_of(f"HighrimWithdrawal{n}") if f == fx("HighrimAbAllSkillsDown")]
+            self.assertEqual(down, [-10.0 * n])
+            self.assertIn(fx("HighrimAbAllSkillsDown"), self.visible(f"HighrimWithdrawal{n}"))
+            self.assertEqual(len(self.visible(f"HighrimWithdrawal{n}")), 1, "ability effects other than the descriptor keep the template's Hide in UI")
+        for rec in self.plugin.by_type("ALCH") + self.plugin.by_type("SPEL"):
+            self.assertLessEqual(len(self.visible(rec.edid)), 6, f"{rec.edid} shows too many effects")
 
     def test_shaky_is_not_on_the_rimerush_potion_and_still_on_the_others(self):
         # The plugin (Core::IsShakyHigh) decides when the ability is applied; the potions carry nothing of it.

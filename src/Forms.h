@@ -147,6 +147,9 @@ namespace Highrim::Forms
     inline constexpr std::uint32_t HighrimOverdoseElevated = 0x000DC8;
     inline constexpr std::uint32_t HighrimOverdoseHigh = 0x000DC9;
     inline constexpr std::uint32_t HighrimImodOverdose = 0x000DCA;
+    inline constexpr std::uint32_t HighrimFxAllSkillsUp = 0x000DCB;
+    inline constexpr std::uint32_t HighrimAbAllSkillsUp = 0x000DCC;
+    inline constexpr std::uint32_t HighrimAbAllSkillsDown = 0x000DCD;
 
     // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers (Velvet Haze uses HighrimImodVelvet).
     inline constexpr std::uint32_t kImodStimulant = 0x10C761;

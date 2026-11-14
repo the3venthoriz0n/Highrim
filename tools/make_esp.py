@@ -16,7 +16,15 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
         HighrimFxRegenDown                          stamina regen change, shared by comedowns (non-detrimental clone, negative magnitude)
         HighrimAbRegenDown / AbStaminaDown / AbHealRateDown   constant-effect clones for withdrawal/hangover
         HighrimAbSpeedUp / AbStaminaUp / AbRegenUp / AbResistUp / AbSlow   constant-effect clones for the dose stacks
-  SPEL  HighrimComedownRimerush / VelvetHaze / Dreamcap   60 s fire-and-forget spells the plugin casts at the end of a high
+        HighrimFxHighlyAddictive                    descriptor on every potion (magnitude 0, no gameplay effect)
+        HighrimFxVelvetHealRate / VelvetCarry       Velvet Haze potion effects (the vanilla Invisibility effect is referenced, not cloned)
+        HighrimAbHealRateUp / AbCarryUp             Velvet Haze stack effects
+        HighrimAbAddicted                           the harmless effect of the Addicted abilities
+        HighrimAbShakySpeech / AbShakySneak         Speech / Sneak -999 while high
+        HighrimAbSkill<Skill>                       18 withdrawal effects, one per skill (tier penalty -10 / -20 / -30)
+  SPEL  HighrimShaky                                "Shaky and Suspicious": Speech and Sneak 0 while high
+        HighrimAddicted<Rimerush|VelvetHaze|Dreamcap>   "Addicted: <drug>" abilities (dependency level 10 or more)
+        HighrimComedownRimerush / VelvetHaze / Dreamcap   60 s fire-and-forget spells the plugin casts at the end of a high
         HighrimWithdrawal1 / 2 / 3                  withdrawal abilities (type Ability), one set for all drug types
         HighrimHangover                             ability the plugin adds after a blackout and removes after a game day
         HighrimStack<Rimerush|VelvetHaze|Dreamcap>1..3   dose stack abilities (type Ability), one at a time per drug
@@ -50,6 +58,15 @@ MCM_QUEST_ID = OWN | 0xD62
 ESL = 0x200
 
 HOLDS = ["Whiterun", "Eastmarch", "Rift", "Haafingar", "Hjaalmarch", "Reach", "Falkreath", "Pale", "Winterhold"]
+# The hold's capital city, which is all the notes and the Lost Gear ability name (same table as Core::CapitalName).
+CAPITALS = {"Whiterun": "Whiterun", "Eastmarch": "Windhelm", "Rift": "Riften", "Haafingar": "Solitude",
+            "Hjaalmarch": "Morthal", "Reach": "Markarth", "Falkreath": "Falkreath", "Pale": "Dawnstar",
+            "Winterhold": "Winterhold"}
+
+
+def note_text(hold):
+    return ("Last night is a blur. Shouting. Guards. A cold floor, maybe a cell. Your things might be somewhere in "
+            f"{CAPITALS[hold]}... if the guards kept them.")
 
 # Vanilla form IDs used by reference (all confirmed in Skyrim.esm by tests/test_esp.py).
 GIANT_LICHEN, GLOWING_MUSHROOM, LAVENDER, HANGING_MOSS, SWAMP_FUNGAL_POD = (
@@ -98,8 +115,37 @@ STACK_LEVELS = 3
 HIGH_SECONDS = 120   # how long a potion's own effects last
 
 # Potion base magnitudes. Task 9 raised them about 35% (was: speed 25, stamina 50, regen 100; resist 150, slow 20).
+# Task 14: Velvet Haze no longer adds armour (HighrimFxVelvetResist stays in the plugin, pinned, unused); it gives rapid
+# health regeneration, more carry weight and invisibility. "regen" is a percentage of the base health regeneration
+# (actor value Health Rate Mult, 155, the one the vampire / withdrawal abilities lower by 50): +500 means the
+# player regenerates 6 times as fast as normal, a clearly rapid value (the rate is cut in combat by a game setting,
+# so the real in-combat effect is unverified). Carry weight is in points. Invisibility has no magnitude.
 RIMERUSH_BASE = {"speed": 34, "stamina": 68, "regen": 135}
-VELVET_BASE = {"resist": 200, "slow": 27}
+VELVET_BASE = {"slow": 27, "regen": 500, "carry": 150}
+VELVET_STACK_REGEN = (100, 200, 300)   # more health regeneration (percent of the base rate) per stack level
+VELVET_STACK_CARRY = (50, 100, 150)    # more carry weight per stack level
+ACTOR_VALUE_HEAL_RATE_MULT = 0x9B      # Health Rate Mult (155), same value as ACTOR_VALUE_HEAL_RATE above
+INVISIBILITY_EFFECT = 0x0003EB3D       # AlchInvisibillity (Skyrim.esm): the effect of the vanilla Potion of Invisibility
+
+# Task 14: skills. Every withdrawal tier lowers all 18 skills by a flat amount; a high sets Speech and Sneak to 0.
+WITHDRAWAL_SKILL_PENALTY = {1: -10, 2: -20, 3: -30}
+SHAKY_SKILL_PENALTY = -999             # "Shaky and Suspicious": large enough to bring any skill to 0
+# (name, actor value) in the order of the game's actor value table
+SKILLS = [("One-handed", 6), ("Two-handed", 7), ("Archery", 8), ("Block", 9), ("Smithing", 10), ("Heavy Armor", 11),
+          ("Light Armor", 12), ("Pickpocket", 13), ("Lockpicking", 14), ("Sneak", 15), ("Alchemy", 16), ("Speech", 17),
+          ("Alteration", 18), ("Conjuration", 19), ("Destruction", 20), ("Illusion", 21), ("Restoration", 22),
+          ("Enchanting", 23)]
+assert len(SKILLS) == 18
+
+
+def skill_edid(name):
+    return "HighrimAbSkill" + "".join(w.capitalize() for w in name.replace("-", " ").split())
+
+
+DRUG_NAMES = {"Rimerush": "Rimerush", "VelvetHaze": "Velvet Haze", "Dreamcap": "Dreamcap"}
+ADDICTED_TEXT = "You depend on {drug}. Without it you will go into withdrawal after about 4 hours."
+HIGHLY_ADDICTIVE_TEXT = ("This drug is highly addictive. Taking it builds dependency, and withdrawal follows when you "
+                         "stop.")
 
 # (EDID, name, description, template, overrides)
 MGEFS = [
@@ -137,6 +183,28 @@ MGEFS = [
     # it is +1 carry weight (harmless); the spell's own description is what tells the player where the gear is.
     ("HighrimAbLostGear", "Lost Gear", "Carry weight is increased by <mag>.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_CARRY_WEIGHT}),
+    # Task 14. The descriptor every potion carries (magnitude 0: a carry weight change of nothing).
+    ("HighrimFxHighlyAddictive", "Highly Addictive", HIGHLY_ADDICTIVE_TEXT, T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_CARRY_WEIGHT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
+    ("HighrimFxVelvetHealRate", "Velvet Regeneration", "Health regenerates <mag>% faster for <dur> seconds.",
+     T_FORT_STAMINA_RATE, {"av": ACTOR_VALUE_HEAL_RATE_MULT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
+    ("HighrimFxVelvetCarry", "Velvet Strength", "Carry weight is increased by <mag> for <dur> seconds.",
+     T_FORT_STAMINA, {"av": ACTOR_VALUE_CARRY_WEIGHT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
+    ("HighrimAbHealRateUp", "Surge Regeneration", "Health regenerates <mag>% faster.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_HEAL_RATE_MULT}),
+    ("HighrimAbCarryUp", "Surge Strength", "Carry weight is increased by <mag>.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_CARRY_WEIGHT}),
+    # Addicted abilities carry this: no effect on the game (magnitude 0), it only gives the ability a line in Active Effects.
+    ("HighrimAbAddicted", "Addicted", "You depend on this drug.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_CARRY_WEIGHT}),
+    # "Shaky and Suspicious": Speech and Sneak go to 0 while high.
+    ("HighrimAbShakySpeech", "Shaky Speech", "Speech is 0 while you are high.", T_AB_FORT_STAMINA, {"av": 17}),
+    ("HighrimAbShakySneak", "Suspicious Sneak", "Sneak is 0 while you are high.", T_AB_FORT_STAMINA, {"av": 15}),
+] + [
+    # One per skill, used by all three withdrawal abilities (the magnitude is the tier's penalty).
+    (skill_edid(name), f"Withdrawal: {name}", f"{name} is changed by <mag> while you are in withdrawal.",
+     T_AB_FORT_STAMINA, {"av": av})
+    for name, av in SKILLS
 ]
 
 # Plain-words text for the spell descriptions of effects whose magnitude is negative (<neg> is the absolute value).
@@ -148,6 +216,7 @@ PLAIN = {
     "HighrimAbHealRateDown": "Health regenerates <neg>% slower.",
     "HighrimAbSlow": "Movement is <neg>% slower.",
 }
+PLAIN.update({skill_edid(name): f"{name} is reduced by <neg> while you are in withdrawal." for name, _ in SKILLS})
 
 
 def fx(edid):
@@ -165,7 +234,8 @@ STACKS = [
     ("HighrimStackRimerush", "Rimerush Surge",
      [("HighrimAbSpeedUp", (10, 20, 30)), ("HighrimAbStaminaUp", (25, 50, 75)), ("HighrimAbRegenUp", (50, 100, 150))]),
     ("HighrimStackVelvetHaze", "Velvet Haze Weight",
-     [("HighrimAbResistUp", (50, 100, 150)), ("HighrimAbSlow", (-8, -16, -24))]),
+     [("HighrimAbHealRateUp", VELVET_STACK_REGEN), ("HighrimAbCarryUp", VELVET_STACK_CARRY),
+      ("HighrimAbSlow", (-8, -16, -24))]),
     ("HighrimStackDreamcap", "Dreamcap Daze",
      [("HighrimAbSlow", (-5, -10, -15)), ("HighrimAbRegenDown", (-15, -30, -45))]),
 ]
@@ -182,6 +252,10 @@ def stack_spell_defs():
     return out
 
 
+def skill_effects(tier):
+    return [effect(fx(skill_edid(name)), WITHDRAWAL_SKILL_PENALTY[tier], 0) for name, _ in SKILLS]
+
+
 def spell_defs():
     """(EDID, name, kind, effects) with kind 'ability' or 'spell'."""
     return [
@@ -189,18 +263,22 @@ def spell_defs():
         ("HighrimComedownVelvetHaze", "Velvet Haze Crash", "spell", [effect(fx("HighrimFxRegenDown"), -40, 60)]),
         ("HighrimComedownDreamcap", "Dreamcap Crash", "spell", [effect(DRUGGED_EFFECT, 0, 60)]),
         ("HighrimWithdrawal1", "Withdrawal I: Cravings", "ability",
-         [effect(fx("HighrimAbRegenDown"), -20, 0)]),
+         [effect(fx("HighrimAbRegenDown"), -20, 0)] + skill_effects(1)),
         ("HighrimWithdrawal2", "Withdrawal II: Shakes", "ability",
-         [effect(fx("HighrimAbRegenDown"), -35, 0), effect(fx("HighrimAbStaminaDown"), -25, 0)]),
+         [effect(fx("HighrimAbRegenDown"), -35, 0), effect(fx("HighrimAbStaminaDown"), -25, 0)] + skill_effects(2)),
         ("HighrimWithdrawal3", "Withdrawal III: Sickness", "ability",
          [effect(fx("HighrimAbRegenDown"), -50, 0), effect(fx("HighrimAbStaminaDown"), -40, 0),
-          effect(fx("HighrimAbHealRateDown"), -50, 0)]),
+          effect(fx("HighrimAbHealRateDown"), -50, 0)] + skill_effects(3)),
         ("HighrimHangover", "Hangover", "ability",
          [effect(fx("HighrimAbStaminaDown"), -30, 0), effect(fx("HighrimAbRegenDown"), -25, 0)]),
         ("HighrimBlurPulse", "Blurred Vision", "spell", [effect(DRUGGED_EFFECT, 0, 8)]),
     ] + stack_spell_defs() + [
-        (f"HighrimLostGear{hold}", f"Lost Gear: {hold} Prison", "ability", [effect(fx("HighrimAbLostGear"), 1, 0)])
-        for hold in HOLDS]
+        (f"HighrimLostGear{hold}", f"Lost Gear: {CAPITALS[hold]}?", "ability", [effect(fx("HighrimAbLostGear"), 1, 0)])
+        for hold in HOLDS] + [
+        ("HighrimShaky", "Shaky and Suspicious", "ability",
+         [effect(fx("HighrimAbShakySpeech"), SHAKY_SKILL_PENALTY, 0), effect(fx("HighrimAbShakySneak"), SHAKY_SKILL_PENALTY, 0)])
+    ] + [(f"HighrimAddicted{key}", f"Addicted: {name}", "ability", [effect(fx("HighrimAbAddicted"), 0, 0)])
+         for key, name in DRUG_NAMES.items()]
 
 
 # Spell descriptions that say more than the effect texts do (everything else is built from the effects' texts).
@@ -209,7 +287,9 @@ SPELL_EXTRA = {
     "HighrimWithdrawal3": " Your vision blurs now and then.",
     "HighrimHangover": " Your vision blurs now and then. Lasts one game day.",
 }
-SPELL_TEXT = {f"HighrimLostGear{hold}": f"Your things are in the {hold} prison." for hold in HOLDS}
+SPELL_TEXT = {"HighrimShaky": "Speech and Sneak are 0 while you are high."}
+SPELL_TEXT.update({f"HighrimAddicted{key}": ADDICTED_TEXT.format(drug=name) for key, name in DRUG_NAMES.items()})
+SPELL_TEXT.update({f"HighrimLostGear{hold}": f"A hazy memory: the guards in {CAPITALS[hold]} may have your things." for hold in HOLDS})
 
 
 def drug_defs():
@@ -219,12 +299,16 @@ def drug_defs():
         ("HighrimRimerush", "Rimerush", 60,
          [effect(fx("HighrimFxRimerushSpeed"), RIMERUSH_BASE["speed"], high),
           effect(fx("HighrimFxRimerushStamina"), RIMERUSH_BASE["stamina"], high),
-          effect(fx("HighrimFxRimerushRegen"), RIMERUSH_BASE["regen"], high)]),
+          effect(fx("HighrimFxRimerushRegen"), RIMERUSH_BASE["regen"], high),
+          effect(fx("HighrimFxHighlyAddictive"), 0, high)]),
         ("HighrimVelvetHaze", "Velvet Haze", 55,
-         [effect(fx("HighrimFxVelvetResist"), VELVET_BASE["resist"], high),
-          effect(fx("HighrimFxVelvetSlow"), VELVET_BASE["slow"], high)]),
+         [effect(fx("HighrimFxVelvetSlow"), VELVET_BASE["slow"], high),
+          effect(fx("HighrimFxVelvetHealRate"), VELVET_BASE["regen"], high),
+          effect(fx("HighrimFxVelvetCarry"), VELVET_BASE["carry"], high),
+          effect(INVISIBILITY_EFFECT, 0, high),
+          effect(fx("HighrimFxHighlyAddictive"), 0, high)]),
         ("HighrimDreamcap", "Dreamcap", 70,
-         [effect(DRUGGED_EFFECT, 0, high)]),  # reveal life is cast by the plugin (vanilla Detect Life), not a potion effect
+         [effect(DRUGGED_EFFECT, 0, high), effect(fx("HighrimFxHighlyAddictive"), 0, high)]),  # reveal life is cast by the plugin (vanilla Detect Life), not a potion effect
     ]
 
 
@@ -237,7 +321,8 @@ RECIPES = [  # (EDID, product EDID, [(ingredient, count)]): 1000 gold, nothing e
 KEYWORD_EDID = "HighrimDrug"
 SPELL_EDIDS = ["HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
                "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover",
-               "HighrimBlurPulse"] + STACK_EDIDS + [f"HighrimLostGear{hold}" for hold in HOLDS]
+               "HighrimBlurPulse"] + STACK_EDIDS + [f"HighrimLostGear{hold}" for hold in HOLDS] + [
+    "HighrimShaky"] + [f"HighrimAddicted{key}" for key in DRUG_NAMES]
 NOTE_EDIDS = ["HighrimNote" + hold for hold in HOLDS]
 ALCH_EDIDS = ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"]
 COBJ_EDIDS = [r[0] for r in RECIPES]
@@ -360,7 +445,8 @@ def effect_subs(effects):
 
 
 # Text for vanilla effects we reuse that have no description of their own.
-VANILLA_EFFECT_TEXT = {DRUGGED_EFFECT: "Your vision swims and blurs for <dur> seconds."}
+VANILLA_EFFECT_TEXT = {DRUGGED_EFFECT: "Your vision swims and blurs for <dur> seconds.",
+                       INVISIBILITY_EFFECT: "You are invisible for <dur> seconds."}
 
 
 def spell_description(effects):
@@ -370,8 +456,15 @@ def spell_description(effects):
     for name, _, description, _, _ in MGEFS:
         texts[ids[name]] = PLAIN.get(name, description)
     texts.update(VANILLA_EFFECT_TEXT)
+    skill_ids = {ids[skill_edid(name)] for name, _ in SKILLS}
     parts = []
     for item in effects:
+        if item["mgef"] in skill_ids:
+            # 18 near-identical lines would bury the tooltip: one sentence for all skills (the penalty is the same).
+            text = f"All skills are reduced by {abs(item['mag']):g} while you are in withdrawal."
+            if text not in parts:
+                parts.append(text)
+            continue
         text = texts.get(item["mgef"], "")
         text = (text.replace("<neg>", f"{abs(item['mag']):g}").replace("<mag>", f"{item['mag']:g}")
                 .replace("<dur>", str(item["dur"])).replace("<area>", str(item["area"])))
@@ -402,7 +495,7 @@ def build_book(edid, hold):
     subs = template(T_BOOK, "BOOK")
     replace(subs, "EDID", esp.zstr(edid))
     replace(subs, "FULL", esp.zstr(f"Crumpled Note ({hold})"))
-    replace(subs, "DESC", esp.zstr(f"Your things are in the {hold} prison."))
+    replace(subs, "DESC", esp.zstr(note_text(hold)))
     return esp.record(b"BOOK", ids[edid], esp.join_subs(subs))
 
 

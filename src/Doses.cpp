@@ -35,6 +35,10 @@ namespace Highrim::Doses
         std::array<int, 3>    g_wantedLevel{};               // stack ability level each drug should carry (0 = none)
         std::array<int, 3>    g_appliedLevel{ -1, -1, -1 };  // what the player carries; -1 = unknown, always re-sync
         std::array<double, 3> g_strength{ 0.6, 0.6, 0.6 };
+        // "Shaky and Suspicious" (Speech and Sneak 0) while any high lasts. wanted is computed under g_mutex in Tick,
+        // applied on the game thread; -1 = unknown (always re-sync after a load, new game, revert or blackout start).
+        bool                  g_shakyWanted  = false;
+        int                   g_shakyApplied = -1;
         std::array<std::optional<double>, 3> g_visualDue{};  // real seconds; set while that drug's high lasts
         std::array<bool, 3>   g_visualActive{};              // a screen effect was triggered and not stopped yet
         std::array<bool, 3>   g_visualStop{};                // the game thread must stop it (high ended, load, blackout)
@@ -272,6 +276,53 @@ namespace Highrim::Doses
             std::lock_guard lock(g_mutex);
             if (epoch == g_epoch) {
                 g_appliedLevel = result;
+            }
+        }
+
+        // Game thread. Makes the player carry "Shaky and Suspicious" exactly while a high lasts, never twice.
+        void SyncShaky()
+        {
+            bool          wanted  = false;
+            int           applied = -1;
+            std::uint32_t epoch   = 0;
+            {
+                std::lock_guard lock(g_mutex);
+                wanted  = g_shakyWanted;
+                applied = g_shakyApplied;
+                epoch   = g_epoch;
+            }
+            if (applied == (wanted ? 1 : 0)) {
+                return;
+            }
+            auto* player  = RE::PlayerCharacter::GetSingleton();
+            auto* ui      = RE::UI::GetSingleton();
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            if (!player || !handler || !player->Is3DLoaded() || !player->GetParentCell() || !ui ||
+                ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+                return;
+            }
+            auto* spell = handler->LookupForm<RE::SpellItem>(Forms::HighrimShaky, Forms::kPluginName);
+            if (!spell) {
+                spdlog::error("Shaky: ability not found in {}", Forms::kPluginName);
+                return;
+            }
+            const bool has = player->HasSpell(spell);
+            if (wanted && !has) {
+                const bool added = player->AddSpell(spell);
+                spdlog::info("Shaky: high started, 'Shaky and Suspicious' added, AddSpell -> {}", added);
+                if (!added && !player->HasSpell(spell)) {
+                    return;
+                }
+            } else if (!wanted && has) {
+                const bool removed = player->RemoveSpell(spell);
+                spdlog::info("Shaky: no high, 'Shaky and Suspicious' removed, RemoveSpell -> {}", removed);
+                if (!removed && player->HasSpell(spell)) {
+                    return;
+                }
+            }
+            std::lock_guard lock(g_mutex);
+            if (epoch == g_epoch) {
+                g_shakyApplied = wanted ? 1 : 0;
             }
         }
 
@@ -586,6 +637,7 @@ namespace Highrim::Doses
                 g_comedownStop   = false;
                 g_comedownEnd.reset();
             }
+            g_shakyWanted = Core::IsHigh(g_comedowns);
             ragdollActive = g_comedowns.dueSeconds[static_cast<std::size_t>(Core::DrugType::kDepressant)].has_value();
             ragdollStack  = g_stacks.count[static_cast<std::size_t>(Core::DrugType::kDepressant)];
             while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {
@@ -619,6 +671,7 @@ namespace Highrim::Doses
             TriggerVisual(type, strength);
         }
         SyncStackAbilities();
+        SyncShaky();
         Ragdoll::Tick(ragdollActive && !runOverdose && !blackoutPending && !runKnock, ragdollStack);
         for (const auto& e : diagnostics) {
             LogActiveEffects(e.type, e.pass);
@@ -642,6 +695,8 @@ namespace Highrim::Doses
         g_totals = Core::DoseTotals{};
         g_wantedLevel  = {};
         g_appliedLevel = { -1, -1, -1 };
+        g_shakyWanted  = false;
+        g_shakyApplied = -1;  // unknown: the game thread strips the ability on its next tick
         g_visualDue    = {};
         g_visualStop   = g_visualActive;  // the game thread stops whatever screen effect is still running
         g_detectNext.reset();

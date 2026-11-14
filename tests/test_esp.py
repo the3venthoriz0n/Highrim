@@ -27,6 +27,18 @@ SKYRIM_ESM = os.environ.get(
 
 # The documented EDID list (keep in sync with the docstring of tools/make_esp.py).
 HOLDS = ["Whiterun", "Eastmarch", "Rift", "Haafingar", "Hjaalmarch", "Reach", "Falkreath", "Pale", "Winterhold"]
+CAPITALS = {"Whiterun": "Whiterun", "Eastmarch": "Windhelm", "Rift": "Riften", "Haafingar": "Solitude",
+            "Hjaalmarch": "Morthal", "Reach": "Markarth", "Falkreath": "Falkreath", "Pale": "Dawnstar",
+            "Winterhold": "Winterhold"}
+# (display name, EDID part, actor value) of the 18 skills
+SKILLS = [("One-handed", "OneHanded", 6), ("Two-handed", "TwoHanded", 7), ("Archery", "Archery", 8), ("Block", "Block", 9),
+          ("Smithing", "Smithing", 10), ("Heavy Armor", "HeavyArmor", 11), ("Light Armor", "LightArmor", 12),
+          ("Pickpocket", "Pickpocket", 13), ("Lockpicking", "Lockpicking", 14), ("Sneak", "Sneak", 15),
+          ("Alchemy", "Alchemy", 16), ("Speech", "Speech", 17), ("Alteration", "Alteration", 18),
+          ("Conjuration", "Conjuration", 19), ("Destruction", "Destruction", 20), ("Illusion", "Illusion", 21),
+          ("Restoration", "Restoration", 22), ("Enchanting", "Enchanting", 23)]
+SKILL_NAMES = [edid for _, edid, _ in SKILLS]
+INVISIBILITY = 0x0003EB3D   # AlchInvisibillity in Skyrim.esm
 EXPECTED_EDIDS = {
     "KYWD": ["HighrimDrug"],
     "MGEF": [
@@ -36,13 +48,16 @@ EXPECTED_EDIDS = {
         "HighrimAbRegenDown", "HighrimAbStaminaDown", "HighrimAbHealRateDown",
         "HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbResistUp", "HighrimAbSlow",
         "HighrimAbLostGear",
-    ],
+        "HighrimFxHighlyAddictive", "HighrimFxVelvetHealRate", "HighrimFxVelvetCarry", "HighrimAbHealRateUp",
+        "HighrimAbCarryUp", "HighrimAbAddicted", "HighrimAbShakySpeech", "HighrimAbShakySneak",
+    ] + ["HighrimAbSkill" + name for name in SKILL_NAMES],
     "SPEL": [
         "HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
         "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3",
         "HighrimHangover", "HighrimBlurPulse",
     ] + [f"HighrimStack{drug}{n}" for drug in ("Rimerush", "VelvetHaze", "Dreamcap") for n in (1, 2, 3)]
-    + ["HighrimLostGear" + hold for hold in HOLDS],
+    + ["HighrimLostGear" + hold for hold in HOLDS]
+    + ["HighrimShaky", "HighrimAddictedRimerush", "HighrimAddictedVelvetHaze", "HighrimAddictedDreamcap"],
     "BOOK": ["HighrimNote" + hold for hold in HOLDS],
     "ALCH": ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"],
     "COBJ": ["HighrimRecipeRimerush", "HighrimRecipeVelvetHaze", "HighrimRecipeDreamcap"],
@@ -386,7 +401,7 @@ class EspTests(unittest.TestCase):
         dreamcap = self.edid["HighrimDreamcap"]
         fx = self.edid["HighrimFxDetectLife"]
         efids = [struct.unpack("<I", raw)[0] for raw in dreamcap.get("EFID")]
-        self.assertEqual(len(efids), 1, "only the sleeping tree vision effect")
+        self.assertEqual(len(efids), 2, "the sleeping tree vision effect and the highly addictive descriptor")
         self.assertNotIn(fx.formid, efids)
         for edid in EXPECTED_EDIDS["ALCH"]:
             self.assertNotIn(fx.formid, [struct.unpack("<I", r)[0] for r in self.edid[edid].get("EFID")])
@@ -411,7 +426,8 @@ class EspTests(unittest.TestCase):
             self.assertEqual(text(edid, "FULL"), name)
         self.assertEqual(text("HighrimComedownRimerush", "DESC"), "Stamina regenerates 60% slower for 60 seconds.")
         self.assertEqual(text("HighrimComedownVelvetHaze", "DESC"), "Stamina regenerates 40% slower for 60 seconds.")
-        self.assertEqual(text("HighrimWithdrawal1", "DESC"), "Stamina regenerates 20% slower.")
+        self.assertEqual(text("HighrimWithdrawal1", "DESC"),
+                         "Stamina regenerates 20% slower. All skills are reduced by 10 while you are in withdrawal.")
         self.assertIn("25 points lower", text("HighrimWithdrawal2", "DESC"))
         self.assertIn("Health regenerates 50% slower", text("HighrimWithdrawal3", "DESC"))
         self.assertIn("Lasts one game day", text("HighrimHangover", "DESC"))
@@ -421,8 +437,9 @@ class EspTests(unittest.TestCase):
     def test_lost_gear_abilities(self):
         for hold in HOLDS:
             spell = self.edid["HighrimLostGear" + hold]
-            self.assertEqual(spell.first("FULL"), f"Lost Gear: {hold} Prison".encode("ascii") + b"\0")
-            self.assertEqual(spell.first("DESC"), f"Your things are in the {hold} prison.".encode("ascii") + b"\0")
+            self.assertEqual(spell.first("FULL"), f"Lost Gear: {CAPITALS[hold]}?".encode("ascii") + b"\0")
+            self.assertEqual(spell.first("DESC"), f"A hazy memory: the guards in {CAPITALS[hold]} may have your things.".encode("ascii") + b"\0")
+            self.assertNotIn(b"rison", spell.first("FULL") + spell.first("DESC"))
             self.assertEqual(struct.unpack_from("<I", spell.first("SPIT"), 8)[0], 4, "ability")
             self.assertEqual(len(spell.get("EFID")), 1)
 
@@ -524,20 +541,106 @@ class EspTests(unittest.TestCase):
                 self.assertLess(per_level[0][fid], per_level[1][fid], "level 2 stronger than 1")
                 self.assertLess(per_level[1][fid], per_level[2][fid], "level 3 stronger than 2")
         # The new ability effects are constant-effect clones (cast type 0) with distinct actor values / names.
-        for edid in ("HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbResistUp", "HighrimAbSlow"):
+        for edid in ("HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbHealRateUp", "HighrimAbCarryUp",
+                     "HighrimAbSlow"):
             data = self.edid[edid].first("DATA")
             self.assertEqual(struct.unpack_from("<I", data, 64)[0], 34, "peak value modifier")
             self.assertTrue(self.edid[edid].first("DNAM").strip(bytes(1)), f"{edid} has its description")
         av = lambda e: struct.unpack_from("<I", self.edid[e].first("DATA"), 68)[0]
         self.assertEqual(av("HighrimAbSpeedUp"), 30)
         self.assertEqual(av("HighrimAbRegenUp"), 0x9D)
-        self.assertEqual(av("HighrimAbResistUp"), 39)
+        self.assertEqual(av("HighrimAbHealRateUp"), 155)
+        self.assertEqual(av("HighrimAbCarryUp"), 32)
+        for n, (regen, carry) in enumerate(((100, 50), (200, 100), (300, 150)), 1):
+            spell = self.edid[f"HighrimStackVelvetHaze{n}"]
+            mags = {struct.unpack("<I", e)[0]: struct.unpack("<f", f[:4])[0] for e, f in zip(spell.get("EFID"), spell.get("EFIT"))}
+            self.assertEqual(mags[self.edid["HighrimAbHealRateUp"].formid], regen)
+            self.assertEqual(mags[self.edid["HighrimAbCarryUp"].formid], carry)
+            self.assertNotIn(self.edid["HighrimAbResistUp"].formid, mags, "no armour in the stacks any more")
+            self.assertEqual(len(mags), 3, "no invisibility in the stacks")
 
     def test_potion_base_magnitudes_were_raised(self):
         def mags(edid):
             return [struct.unpack("<f", e[:4])[0] for e in self.edid[edid].get("EFIT")]
-        self.assertEqual(mags("HighrimRimerush"), [34.0, 68.0, 135.0])  # was 25, 50, 100
-        self.assertEqual(mags("HighrimVelvetHaze"), [200.0, 27.0])      # was 150, 20
+        self.assertEqual(mags("HighrimRimerush"), [34.0, 68.0, 135.0, 0.0])  # plus the highly addictive descriptor
+        self.assertEqual(mags("HighrimVelvetHaze"), [27.0, 500.0, 150.0, 0.0, 0.0])  # slow, regen, carry, invisible, descriptor
+
+    # --- Task 14 -----------------------------------------------------------------------------
+    def effects_of(self, edid):
+        rec = self.edid[edid]
+        return [(struct.unpack("<I", a)[0], struct.unpack("<fII", b)) for a, b in zip(rec.get("EFID"), rec.get("EFIT"))]
+
+    def test_withdrawal_lowers_all_18_skills_by_tier(self):
+        by_id = {self.edid["HighrimAbSkill" + edid].formid: (name, av) for name, edid, av in SKILLS}
+        self.assertEqual(len(by_id), 18)
+        for tier, penalty in ((1, -10), (2, -20), (3, -30)):
+            fx = self.effects_of(f"HighrimWithdrawal{tier}")
+            skills = [(by_id[f], e) for f, e in fx if f in by_id]
+            self.assertEqual(sorted(n for (n, _), _ in skills), sorted(n for n, _, _ in SKILLS), "each skill once")
+            for (name, av), (mag, area, dur) in skills:
+                self.assertEqual(mag, penalty, f"tier {tier} {name}")
+                self.assertEqual(dur, 0)
+            self.assertEqual(len({f for f, _ in fx}), len(fx), "no effect listed twice")
+            self.assertIn(self.edid["HighrimAbRegenDown"].formid, [f for f, _ in fx])
+        tier3 = [f for f, _ in self.effects_of("HighrimWithdrawal3")]
+        self.assertIn(self.edid["HighrimAbStaminaDown"].formid, tier3)
+        self.assertIn(self.edid["HighrimAbHealRateDown"].formid, tier3)
+        for name, edid, av in SKILLS:
+            mgef = self.edid["HighrimAbSkill" + edid]
+            self.assertEqual(struct.unpack_from("<I", mgef.first("DATA"), 68)[0], av, name)
+            self.assertEqual(struct.unpack_from("<I", mgef.first("DATA"), 0)[0] & 0x5, 0, "not hostile or detrimental")
+            self.assertIn(name.encode("ascii"), mgef.first("DNAM"))
+            self.assertIn(b"withdrawal", mgef.first("DNAM"))
+        text = self.edid["HighrimWithdrawal2"].first("DESC").rstrip(bytes(1)).decode("ascii")
+        self.assertIn("All skills are reduced by 20", text)
+
+    def test_shaky_and_suspicious_zeroes_speech_and_sneak(self):
+        spell = self.edid["HighrimShaky"]
+        self.assertEqual(spell.first("FULL"), b"Shaky and Suspicious" + bytes(1))
+        self.assertEqual(spell.first("DESC"), b"Speech and Sneak are 0 while you are high." + bytes(1))
+        self.assertEqual(struct.unpack_from("<I", spell.first("SPIT"), 8)[0], 4, "ability")
+        fx = self.effects_of("HighrimShaky")
+        self.assertEqual(len(fx), 2)
+        by_formid = {r.formid: r for r in self.plugin.records}
+        avs = {struct.unpack_from("<I", by_formid[f].first("DATA"), 68)[0] for f, _ in fx}
+        self.assertEqual(avs, {17, 15}, "Speechcraft and Sneak")
+        for _, (mag, area, dur) in fx:
+            self.assertLessEqual(mag, -999)
+            self.assertEqual(dur, 0)
+
+    def test_addicted_abilities(self):
+        for key, name in (("Rimerush", "Rimerush"), ("VelvetHaze", "Velvet Haze"), ("Dreamcap", "Dreamcap")):
+            spell = self.edid["HighrimAddicted" + key]
+            self.assertEqual(spell.first("FULL"), f"Addicted: {name}".encode("ascii") + bytes(1))
+            self.assertEqual(spell.first("DESC"), (f"You depend on {name}. Without it you will go into withdrawal after "
+                                                   "about 4 hours.").encode("ascii") + bytes(1))
+            self.assertEqual(struct.unpack_from("<I", spell.first("SPIT"), 8)[0], 4, "ability")
+            self.assertEqual(len(spell.get("EFID")), 1)
+
+    def test_every_drug_is_listed_as_highly_addictive_once(self):
+        fx = self.edid["HighrimFxHighlyAddictive"]
+        self.assertEqual(fx.first("FULL"), b"Highly Addictive" + bytes(1))
+        self.assertEqual(fx.first("DNAM"), b"This drug is highly addictive. Taking it builds dependency, and withdrawal follows when you stop." + bytes(1))
+        for edid in EXPECTED_EDIDS["ALCH"]:
+            listed = [f for f, _ in self.effects_of(edid)]
+            self.assertEqual(listed.count(fx.formid), 1, edid)
+            self.assertEqual(len(listed), len(set(listed)), f"{edid} lists no effect twice")
+            self.assertEqual([m for f, (m, _, _) in self.effects_of(edid) if f == fx.formid], [0.0])
+        self.assertEqual(self.edid["HighrimVelvetHaze"].first("FULL"), b"Velvet Haze" + bytes(1), "items are not renamed")
+
+    def test_velvet_haze_effects(self):
+        velvet = self.effects_of("HighrimVelvetHaze")
+        self.assertEqual([f for f, _ in velvet], [
+            self.edid["HighrimFxVelvetSlow"].formid, self.edid["HighrimFxVelvetHealRate"].formid,
+            self.edid["HighrimFxVelvetCarry"].formid, INVISIBILITY, self.edid["HighrimFxHighlyAddictive"].formid])
+        self.assertNotIn(self.edid["HighrimFxVelvetResist"].formid, [f for f, _ in velvet], "no armour effect any more")
+        self.assertIn("HighrimFxVelvetResist", self.edid, "the pinned record stays")
+        self.assertEqual({d for _, (_, _, d) in velvet}, {120})
+        regen = struct.unpack_from("<I", self.edid["HighrimFxVelvetHealRate"].first("DATA"), 68)[0]
+        carry = struct.unpack_from("<I", self.edid["HighrimFxVelvetCarry"].first("DATA"), 68)[0]
+        self.assertEqual((regen, carry), (155, 32))
+        for edid in ("HighrimFxVelvetHealRate", "HighrimFxVelvetCarry", "HighrimFxHighlyAddictive"):
+            self.assertTrue(self.edid[edid].first("DNAM").strip(bytes(1)))
 
     # --- BOOK -------------------------------------------------------------------
     def test_nine_notes_with_exact_text(self):
@@ -546,7 +649,10 @@ class EspTests(unittest.TestCase):
         for hold in HOLDS:
             book = self.edid["HighrimNote" + hold]
             text = book.first("DESC")
-            self.assertEqual(text, f"Your things are in the {hold} prison.".encode("ascii") + b"\0")
+            expected = ("Last night is a blur. Shouting. Guards. A cold floor, maybe a cell. Your things might be somewhere in "
+                        f"{CAPITALS[hold]}... if the guards kept them.")
+            self.assertEqual(text, expected.encode("ascii") + b"\0")
+            self.assertNotIn(b"rison", text)
 
     # --- determinism, committed outputs -----------------------------------------
     def test_deterministic_across_runs(self):

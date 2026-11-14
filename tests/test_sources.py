@@ -38,6 +38,17 @@ class SourceTests(unittest.TestCase):
         for hold in holds:
             self.assertIn(f"HighrimLostGear{hold}", table)
 
+    def test_clue_texts_use_the_capital_and_never_say_prison(self):
+        # The note, the wake-up message and Lost Gear name the capital city only (see Core::CapitalName).
+        core = read("Core.cpp")
+        for fn in ("LostGearMessage", "NoteText"):
+            body = core[core.index(f"std::string {fn}("):]
+            body = body[:body.index("    }")]
+            self.assertNotIn("prison", body, f"{fn} must not say prison")
+        blackout = read("Blackout.cpp")
+        self.assertIn("Core::NoteText(Core::CapitalName(", blackout)
+        self.assertIn("Core::LostGearMessage(Core::CapitalName(", blackout)
+
     def test_no_lookup_through_a_base_class_without_a_form_type(self):
         # TESDataHandler::LookupForm<T> checks form->Is(T::FORMTYPE). TESBoundObject (and MagicItem) have no form type
         # of their own, so the lookup always returned null: this is why no note was ever given.

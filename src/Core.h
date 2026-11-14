@@ -71,6 +71,19 @@ namespace Highrim::Core
     int WithdrawalTier(float level, double hoursSinceLastDose);
     int HighestTier(const Addiction& a, double nowHours);
 
+    // The drug whose withdrawal is the worst (highest tier, same decay and grace rules as HighestTier). A tie goes to
+    // the lowest type index (Rimerush, then Velvet Haze, then Dreamcap). nullopt when no drug is in withdrawal.
+    std::optional<DrugType> WorstDrugForTier(const Addiction& a, double nowHours);
+
+    // "Addicted": a type's dependency level (after decay) is at least kTier1Level. One flag per drug type.
+    bool                IsAddicted(float level);
+    std::array<bool, 3> AddictedFlags(const Addiction& a, double nowHours);
+
+    // True when a dose was recorded between `before` and `now` (any drug's last dose time differs).
+    bool DoseSince(const Addiction& before, const Addiction& now);
+
+    std::string DrugDisplayName(DrugType type);  // "Rimerush", "Velvet Haze", "Dreamcap"
+
     std::string              Serialize(const Addiction& a);
     std::optional<Addiction> Deserialize(std::string_view text);
 
@@ -99,8 +112,22 @@ namespace Highrim::Core
     // HUD texts for the end of a high and for a withdrawal tier (0 = withdrawal over). Same numbers as the plugin's
     // spell descriptions (tools/make_esp.py).
     std::string ComedownMessage(DrugType type);
-    std::string WithdrawalMessage(int tier);
-    std::string LostGearMessage(std::string_view hold);  // shown after waking up
+    // Withdrawal tier 1..3 names the drug the player needs, e.g. "Withdrawal II: your hands shake. You need Rimerush.".
+    // Any other tier gives "". Same numbers as the plugin's spell descriptions (tools/make_esp.py).
+    std::string WithdrawalMessage(int tier, DrugType drug);
+    std::string CravingsEaseMessage();                       // a dose of the drug brought the tier down
+    std::string NoLongerAddictedMessage(DrugType drug);      // dependency fell below kTier1Level
+
+    // What to tell the player when the withdrawal tier changed between two polls. beforeTier < 0 means unknown (after a
+    // load): no message. A raised tier names the drug causing the worst tier; a lowered tier says the cravings ease only
+    // when a dose caused it (a tier that merely decays says nothing).
+    enum class WithdrawalNotice { kNone, kRaised, kEased };
+    WithdrawalNotice ClassifyWithdrawalChange(int beforeTier, int afterTier, bool doseTaken);
+
+    // A high lasts from a counted dose until its comedown is due: true while any drug has a comedown pending.
+    struct ComedownTimers;
+    bool IsHigh(const ComedownTimers& t);
+    std::string LostGearMessage(std::string_view city);  // shown after waking up; vague on purpose, never says "prison"
 
     // Did a teleport work? The blackout moves the player with MoveTo, which the engine applies a moment later, so the
     // position is only compared after kMoveSettleSeconds (still black). kNotApplicable: the target was already
@@ -253,5 +280,8 @@ namespace Highrim::Core
     enum class AnchorSpace { kSame, kChild, kUnrelated };
     AnchorSpace ClassifyAnchorSpace(std::uint32_t jailWorld, std::uint32_t space, const WorldParents& parents);
 
-    std::string NoteText(std::string_view prisonName);
+    // Capital city of a hold (Eastmarch -> Windhelm, ...); an unknown name comes back unchanged. The notes, the wake-up
+    // message and the Lost Gear ability name the city only, never the prison.
+    std::string CapitalName(std::string_view hold);
+    std::string NoteText(std::string_view city);
 }

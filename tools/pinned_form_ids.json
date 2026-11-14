@@ -53,7 +53,18 @@
     "HighrimStackDreamcap1": "0x000D6F",
     "HighrimStackDreamcap2": "0x000D70",
     "HighrimStackDreamcap3": "0x000D71",
-    "HighrimImodVelvet": "0x000D72"
+    "HighrimImodVelvet": "0x000D72",
+    "HighrimAbLostGear": "0x000D73",
+    "HighrimLostGearWhiterun": "0x000D74",
+    "HighrimLostGearEastmarch": "0x000D75",
+    "HighrimLostGearRift": "0x000D76",
+    "HighrimLostGearHaafingar": "0x000D77",
+    "HighrimLostGearHjaalmarch": "0x000D78",
+    "HighrimLostGearReach": "0x000D79",
+    "HighrimLostGearFalkreath": "0x000D7A",
+    "HighrimLostGearPale": "0x000D7B",
+    "HighrimLostGearWinterhold": "0x000D7C",
+    "HighrimImodComedown": "0x000D7D"
   },
-  "_comment2": "provisional: IDs given out by development builds after 0.1.0 (not part of the 0.1.0 contract, but kept stable for saves made with those builds)."
+  "_comment2": "provisional: IDs given out by development builds after 0.1.0 (Task 13 records were pinned at the start of Task 14) (not part of the 0.1.0 contract, but kept stable for saves made with those builds)."
 }

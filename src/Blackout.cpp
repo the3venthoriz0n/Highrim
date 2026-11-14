@@ -282,7 +282,7 @@ namespace Highrim::Blackout
             if (note) {
                 player->AddObjectToContainer(note, nullptr, 1, nullptr);
                 spdlog::info("Blackout: step 6: note given ({} {:08X}), player now has {}; text: {}", note->GetName(), note->GetFormID(),
-                    CountIn(player, note), Core::NoteText(g_settle.holdName + " prison"));
+                    CountIn(player, note), Core::NoteText(Core::CapitalName(g_settle.holdName)));
             } else {
                 spdlog::error("Blackout: step 6: note for {} not found in {} (local id {:06X})", g_settle.holdName, Forms::kPluginName,
                     g_settle.noteLocalId);
@@ -320,7 +320,7 @@ namespace Highrim::Blackout
             }
 
             LostGear::Begin(static_cast<int>(g_settle.holdIndex));
-            g_wakeMessage = Core::LostGearMessage(g_settle.holdName);
+            g_wakeMessage = Core::LostGearMessage(Core::CapitalName(g_settle.holdName));
             g_settle      = SettleContext{};
 
             // Hold the black screen a moment, then Tick() finishes the fade back in.

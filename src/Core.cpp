@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace Highrim::Core
@@ -132,6 +133,52 @@ namespace Highrim::Core
         return best;
     }
 
+    std::optional<DrugType> WorstDrugForTier(const Addiction& a, double nowHours)
+    {
+        Addiction copy = a;
+        Decay(copy, nowHours);
+        int                     best = 0;
+        std::optional<DrugType> who;
+        for (int i = 0; i < 3; ++i) {
+            const double since = copy.lastDoseHours[i] < 0.0 ? 1e9 : nowHours - copy.lastDoseHours[i];
+            const int    tier  = WithdrawalTier(copy.level[i], since);
+            if (tier > best) {  // strictly greater: a tie keeps the lower index
+                best = tier;
+                who  = static_cast<DrugType>(i);
+            }
+        }
+        return who;
+    }
+
+    bool IsAddicted(float level)
+    {
+        return level >= kTier1Level;  // NaN compares false
+    }
+
+    std::array<bool, 3> AddictedFlags(const Addiction& a, double nowHours)
+    {
+        Addiction copy = a;
+        Decay(copy, nowHours);
+        return { IsAddicted(copy.level[0]), IsAddicted(copy.level[1]), IsAddicted(copy.level[2]) };
+    }
+
+    bool DoseSince(const Addiction& before, const Addiction& now)
+    {
+        for (int i = 0; i < 3; ++i) {
+            if (before.lastDoseHours[i] != now.lastDoseHours[i]) return true;
+        }
+        return false;
+    }
+
+    std::string DrugDisplayName(DrugType type)
+    {
+        switch (type) {
+        case DrugType::kStimulant: return "Rimerush";
+        case DrugType::kDepressant: return "Velvet Haze";
+        default: return "Dreamcap";
+        }
+    }
+
     std::string Serialize(const Addiction& a)
     {
         std::string out = "HR1";
@@ -233,19 +280,47 @@ namespace Highrim::Core
         }
     }
 
-    std::string WithdrawalMessage(int tier)
+    std::string WithdrawalMessage(int tier, DrugType drug)
     {
+        const std::string need = " You need " + DrugDisplayName(drug) + ".";
         switch (tier) {
-        case 1: return "Withdrawal I: Cravings. Stamina regenerates 20% slower.";
-        case 2: return "Withdrawal II: Shakes. Stamina regenerates 35% slower and maximum stamina is 25 points lower.";
-        case 3: return "Withdrawal III: Sickness. Stamina regenerates 50% slower, maximum stamina is 40 points lower and health regenerates 50% slower.";
-        default: return "Withdrawal is over.";
+        case 1: return "Withdrawal I: cravings gnaw at you." + need;
+        case 2: return "Withdrawal II: your hands shake." + need;
+        case 3: return "Withdrawal III: you feel sick." + need;
+        default: return "";
         }
     }
 
-    std::string LostGearMessage(std::string_view hold)
+    std::string CravingsEaseMessage()
     {
-        return "You wake up with a splitting headache. Your things are in the " + std::string(hold) + " prison.";
+        return "The cravings ease.";
+    }
+
+    std::string NoLongerAddictedMessage(DrugType drug)
+    {
+        return "You are no longer addicted to " + DrugDisplayName(drug) + ".";
+    }
+
+    WithdrawalNotice ClassifyWithdrawalChange(int beforeTier, int afterTier, bool doseTaken)
+    {
+        if (beforeTier < 0) return WithdrawalNotice::kNone;
+        if (afterTier > beforeTier) return WithdrawalNotice::kRaised;
+        if (afterTier < beforeTier && doseTaken) return WithdrawalNotice::kEased;
+        return WithdrawalNotice::kNone;
+    }
+
+    bool IsHigh(const ComedownTimers& t)
+    {
+        for (const auto& due : t.dueSeconds) {
+            if (due.has_value()) return true;
+        }
+        return false;
+    }
+
+    std::string LostGearMessage(std::string_view city)
+    {
+        return "You wake up with a splitting headache. Last night is a blur... maybe the guards in " + std::string(city) +
+               " took your things.";
     }
 
     namespace
@@ -451,12 +526,23 @@ namespace Highrim::Core
         return HoldChoice{ *best, HoldReason::kNearest };
     }
 
-    std::string NoteText(std::string_view prisonName)
+    std::string CapitalName(std::string_view hold)
     {
-        std::string out = "Your things are in ";
-        out += prisonName;
-        out += '.';
-        return out;
+        static constexpr std::pair<std::string_view, std::string_view> kCapitals[] = {
+            { "Whiterun", "Whiterun" }, { "Eastmarch", "Windhelm" }, { "Rift", "Riften" }, { "Haafingar", "Solitude" },
+            { "Hjaalmarch", "Morthal" }, { "Reach", "Markarth" }, { "Falkreath", "Falkreath" }, { "Pale", "Dawnstar" },
+            { "Winterhold", "Winterhold" },
+        };
+        for (const auto& [name, city] : kCapitals) {
+            if (name == hold) return std::string(city);
+        }
+        return std::string(hold);
+    }
+
+    std::string NoteText(std::string_view city)
+    {
+        return "Last night is a blur. Shouting. Guards. A cold floor, maybe a cell. Your things might be somewhere in " +
+               std::string(city) + "... if the guards kept them.";
     }
 
     WithdrawalPlan PlanWithdrawal(int appliedTier, int wantedTier)

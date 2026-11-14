@@ -186,6 +186,61 @@ namespace
             CHECK(HighestTier(b, 1.0) == 2);
         }
 
+        // WorstDrugForTier: highest tier wins, a tie goes to the lowest type index, none in withdrawal -> nullopt.
+        {
+            Addiction a = fresh();
+            CHECK(!WorstDrugForTier(a, 100.0));
+            a.level[0] = 15.f; a.lastDoseHours[0] = 0.0;   // tier 1
+            a.level[1] = 40.f; a.lastDoseHours[1] = 0.0;   // tier 2
+            a.level[2] = 15.f; a.lastDoseHours[2] = 0.0;   // tier 1
+            CHECK(WorstDrugForTier(a, 4.0) == DrugType::kDepressant);
+            a.level[2] = 70.f;                              // tier 3
+            CHECK(WorstDrugForTier(a, 4.0) == DrugType::kHallucinogen);
+            a.level[0] = 70.f;                              // tie at tier 3: lowest index
+            CHECK(WorstDrugForTier(a, 4.0) == DrugType::kStimulant);
+            a.level[1] = 70.f;
+            CHECK(WorstDrugForTier(a, 4.0) == DrugType::kStimulant);
+            CHECK(!WorstDrugForTier(a, 3.9));               // inside the grace of every drug
+            // Per-drug relief: a fresh dose of Rimerush ends only Rimerush's withdrawal.
+            a.lastDoseHours[0] = 3.0;
+            CHECK(WorstDrugForTier(a, 4.0) == DrugType::kDepressant);
+            CHECK(HighestTier(a, 4.0) == 3);
+            CHECK(!WorstDrugForTier(a, 3.9));
+            // Decay is applied to a copy (5 per day): 66 -> 61 (tier 3) after 24 h, 56 (tier 2) after 48 h.
+            Addiction b = fresh();
+            b.level[1] = 66.f; b.lastDoseHours[1] = 0.0;
+            CHECK(WorstDrugForTier(b, 24.0) == DrugType::kDepressant);
+            CHECK(HighestTier(b, 24.0) == 3);
+            CHECK(WorstDrugForTier(b, 48.0) == DrugType::kDepressant);
+            CHECK(HighestTier(b, 48.0) == 2);
+            CHECK(b.level[1] == 66.f);
+        }
+
+        // IsAddicted / AddictedFlags: dependency level >= 10 after decay.
+        {
+            CHECK(!IsAddicted(9.99f) && IsAddicted(10.f) && IsAddicted(100.f) && !IsAddicted(0.f));
+            Addiction a = fresh();
+            a.level[0] = 10.f; a.level[1] = 9.9f; a.level[2] = 30.f;
+            auto f = AddictedFlags(a, 0.0);
+            CHECK(f[0] && !f[1] && f[2]);
+            f = AddictedFlags(a, 24.0);  // each loses 5 per day: 5, 4.9, 25
+            CHECK(!f[0] && !f[1] && f[2]);
+            CHECK(a.level[0] == 10.f);   // the copy was decayed, not a
+        }
+
+        // DoseSince: a recorded dose changes some drug's last dose time.
+        {
+            Addiction before = fresh();
+            Addiction now    = before;
+            CHECK(!DoseSince(before, now));
+            now.lastDoseHours[1] = 12.0;
+            CHECK(DoseSince(before, now));
+            before = now;
+            CHECK(!DoseSince(before, now));
+            now.lastDoseHours[1] = 13.0;
+            CHECK(DoseSince(before, now));
+        }
+
         // Serialize / Deserialize.
         {
             Addiction a = fresh();
@@ -449,11 +504,30 @@ namespace
         CHECK(ComedownMessage(DrugType::kStimulant) == "Rimerush wears off: stamina regenerates 60% slower for 60 s.");
         CHECK(ComedownMessage(DrugType::kDepressant).starts_with("Velvet Haze wears off"));
         CHECK(ComedownMessage(DrugType::kHallucinogen).starts_with("Dreamcap wears off"));
-        CHECK(WithdrawalMessage(1).starts_with("Withdrawal I: "));
-        CHECK(WithdrawalMessage(2).starts_with("Withdrawal II: "));
-        CHECK(WithdrawalMessage(3).starts_with("Withdrawal III: "));
-        CHECK(WithdrawalMessage(0) == "Withdrawal is over.");
-        CHECK(LostGearMessage("Eastmarch") == "You wake up with a splitting headache. Your things are in the Eastmarch prison.");
+        CHECK(WithdrawalMessage(1, DrugType::kStimulant) == "Withdrawal I: cravings gnaw at you. You need Rimerush.");
+        CHECK(WithdrawalMessage(2, DrugType::kStimulant) == "Withdrawal II: your hands shake. You need Rimerush.");
+        CHECK(WithdrawalMessage(3, DrugType::kDepressant) == "Withdrawal III: you feel sick. You need Velvet Haze.");
+        CHECK(WithdrawalMessage(2, DrugType::kHallucinogen).ends_with("You need Dreamcap."));
+        CHECK(WithdrawalMessage(0, DrugType::kStimulant).empty() && WithdrawalMessage(4, DrugType::kStimulant).empty());
+        CHECK(CravingsEaseMessage() == "The cravings ease.");
+        CHECK(NoLongerAddictedMessage(DrugType::kHallucinogen) == "You are no longer addicted to Dreamcap.");
+        CHECK(DrugDisplayName(DrugType::kDepressant) == "Velvet Haze");
+        CHECK(ClassifyWithdrawalChange(0, 1, false) == WithdrawalNotice::kRaised);
+        CHECK(ClassifyWithdrawalChange(1, 3, true) == WithdrawalNotice::kRaised);
+        CHECK(ClassifyWithdrawalChange(2, 0, true) == WithdrawalNotice::kEased);
+        CHECK(ClassifyWithdrawalChange(3, 2, false) == WithdrawalNotice::kNone);  // decay alone says nothing
+        CHECK(ClassifyWithdrawalChange(2, 2, true) == WithdrawalNotice::kNone);
+        CHECK(ClassifyWithdrawalChange(-1, 3, false) == WithdrawalNotice::kNone); // unknown before (load)
+        {
+            ComedownTimers t;
+            CHECK(!IsHigh(t));
+            OnComedownDose(t, DrugType::kDepressant, 10.0);
+            CHECK(IsHigh(t));
+            CancelComedowns(t);
+            CHECK(!IsHigh(t));
+        }
+        CHECK(LostGearMessage("Windhelm") == "You wake up with a splitting headache. Last night is a blur... maybe the guards in Windhelm took your things.");
+        CHECK(LostGearMessage("Windhelm").find("prison") == std::string::npos);
 
         // Did the teleport work? (compared after the settle delay)
         CHECK(kMoveSettleSeconds > 0.0 && kMoveMinUnits == 1000.0f);
@@ -622,8 +696,12 @@ namespace
             CHECK(TickRagdoll(g, 1e9, true, 4, std::numeric_limits<double>::quiet_NaN()));  // NaN rng -> 0.5, late knock
         }
 
-        CHECK(NoteText("Dawnstar Sanctuary") == "Your things are in Dawnstar Sanctuary.");
-        CHECK(NoteText("") == "Your things are in .");
+        CHECK(NoteText("Dawnstar") == "Last night is a blur. Shouting. Guards. A cold floor, maybe a cell. Your things might be somewhere in Dawnstar... if the guards kept them.");
+        CHECK(NoteText("Dawnstar").find("prison") == std::string::npos);
+        CHECK(CapitalName("Whiterun") == "Whiterun" && CapitalName("Eastmarch") == "Windhelm" && CapitalName("Rift") == "Riften");
+        CHECK(CapitalName("Haafingar") == "Solitude" && CapitalName("Hjaalmarch") == "Morthal" && CapitalName("Reach") == "Markarth");
+        CHECK(CapitalName("Falkreath") == "Falkreath" && CapitalName("Pale") == "Dawnstar" && CapitalName("Winterhold") == "Winterhold");
+        CHECK(CapitalName("Nowhere") == "Nowhere");
         return 0;
     }
 }

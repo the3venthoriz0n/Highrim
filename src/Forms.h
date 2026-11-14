@@ -70,6 +70,36 @@ namespace Highrim::Forms
     inline constexpr std::uint32_t HighrimLostGearPale = 0x000D7B;
     inline constexpr std::uint32_t HighrimLostGearWinterhold = 0x000D7C;
     inline constexpr std::uint32_t HighrimImodComedown = 0x000D7D;
+    inline constexpr std::uint32_t HighrimFxHighlyAddictive = 0x000D7E;
+    inline constexpr std::uint32_t HighrimFxVelvetHealRate = 0x000D7F;
+    inline constexpr std::uint32_t HighrimFxVelvetCarry = 0x000D80;
+    inline constexpr std::uint32_t HighrimAbHealRateUp = 0x000D81;
+    inline constexpr std::uint32_t HighrimAbCarryUp = 0x000D82;
+    inline constexpr std::uint32_t HighrimAbAddicted = 0x000D83;
+    inline constexpr std::uint32_t HighrimAbShakySpeech = 0x000D84;
+    inline constexpr std::uint32_t HighrimAbShakySneak = 0x000D85;
+    inline constexpr std::uint32_t HighrimAbSkillOneHanded = 0x000D86;
+    inline constexpr std::uint32_t HighrimAbSkillTwoHanded = 0x000D87;
+    inline constexpr std::uint32_t HighrimAbSkillArchery = 0x000D88;
+    inline constexpr std::uint32_t HighrimAbSkillBlock = 0x000D89;
+    inline constexpr std::uint32_t HighrimAbSkillSmithing = 0x000D8A;
+    inline constexpr std::uint32_t HighrimAbSkillHeavyArmor = 0x000D8B;
+    inline constexpr std::uint32_t HighrimAbSkillLightArmor = 0x000D8C;
+    inline constexpr std::uint32_t HighrimAbSkillPickpocket = 0x000D8D;
+    inline constexpr std::uint32_t HighrimAbSkillLockpicking = 0x000D8E;
+    inline constexpr std::uint32_t HighrimAbSkillSneak = 0x000D8F;
+    inline constexpr std::uint32_t HighrimAbSkillAlchemy = 0x000D90;
+    inline constexpr std::uint32_t HighrimAbSkillSpeech = 0x000D91;
+    inline constexpr std::uint32_t HighrimAbSkillAlteration = 0x000D92;
+    inline constexpr std::uint32_t HighrimAbSkillConjuration = 0x000D93;
+    inline constexpr std::uint32_t HighrimAbSkillDestruction = 0x000D94;
+    inline constexpr std::uint32_t HighrimAbSkillIllusion = 0x000D95;
+    inline constexpr std::uint32_t HighrimAbSkillRestoration = 0x000D96;
+    inline constexpr std::uint32_t HighrimAbSkillEnchanting = 0x000D97;
+    inline constexpr std::uint32_t HighrimShaky = 0x000D98;
+    inline constexpr std::uint32_t HighrimAddictedRimerush = 0x000D99;
+    inline constexpr std::uint32_t HighrimAddictedVelvetHaze = 0x000D9A;
+    inline constexpr std::uint32_t HighrimAddictedDreamcap = 0x000D9B;
 
     // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers (Velvet Haze uses HighrimImodVelvet).
     inline constexpr std::uint32_t kImodStimulant = 0x10C761;

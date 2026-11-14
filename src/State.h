@@ -5,7 +5,7 @@
 namespace Highrim::State
 {
     inline constexpr std::uint32_t kRecordId      = 'HRIM';
-    inline constexpr std::uint32_t kRecordVersion = 1;
+    inline constexpr std::uint32_t kRecordVersion = 2;   // 1: addiction + hangover; 2: adds the Lost Gear reminder (version 1 still loads)
 
     struct DoseResult
     {

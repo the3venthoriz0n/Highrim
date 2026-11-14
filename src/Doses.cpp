@@ -5,6 +5,7 @@
 #include "Blackout.h"
 #include "Config.h"
 #include "Core.h"
+#include "Diag.h"
 #include "Forms.h"
 #include "Ragdoll.h"
 #include "State.h"
@@ -38,6 +39,21 @@ namespace Highrim::Doses
         std::array<bool, 3>   g_visualActive{};              // a screen effect was triggered and not stopped yet
         std::array<bool, 3>   g_visualStop{};                // the game thread must stop it (high ended, load, blackout)
         std::uint32_t         g_epoch = 0;                   // bumped on every reset so stale game-thread work is dropped
+
+        // Comedown screen effect (one black-and-white IMAD shared by the three drugs): runs until g_comedownEnd, then
+        // the game thread stops it. A later comedown restarts it with its own strength and a new end.
+        std::optional<double> g_comedownEnd;     // real seconds
+        bool                  g_comedownActive = false;
+        bool                  g_comedownStop   = false;  // load, new game, blackout start: stop it now
+
+        // Dreamcap reveal life: the plugin casts vanilla Detect Life itself (potion effects never applied it).
+        std::optional<double> g_detectNext;      // real seconds: next cast, set while a Dreamcap high lasts
+        std::optional<double> g_detectCheckAt;   // real seconds: log the active effects once after a cast
+
+        // The vanilla scroll whose four effects are 001019D8..DB (TGDetectLifeScroll); the player's own Detect Life spell
+        // (DetectLife, 000211EE) is the fallback.
+        constexpr RE::FormID kDetectLifeScroll = 0x001019AE;
+        constexpr RE::FormID kDetectLifeSpell  = 0x000211EE;
 
         constexpr std::array<std::array<std::uint32_t, 3>, 3> kStackIds{ {
             { Forms::HighrimStackRimerush1, Forms::HighrimStackRimerush2, Forms::HighrimStackRimerush3 },
@@ -296,6 +312,91 @@ namespace Highrim::Doses
             spdlog::info("Visual: stopped {} image space modifier {:08X}", DrugName(type), imod->GetFormID());
         }
 
+        // Game thread. How many active effects on the player come from this magic item.
+        int ActiveEffectsFrom(RE::MagicItem* item)
+        {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* target = player ? player->AsMagicTarget() : nullptr;
+            auto* list   = target ? target->GetActiveEffectList() : nullptr;
+            int   count  = 0;
+            if (list) {
+                for (auto* ae : *list) {
+                    if (ae && ae->spell == item && !ae->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled)) {
+                        ++count;
+                    }
+                }
+            }
+            return count;
+        }
+
+        RE::MagicItem* DetectLifeItem()
+        {
+            if (auto* scroll = RE::TESForm::LookupByID<RE::ScrollItem>(kDetectLifeScroll)) {
+                return scroll;
+            }
+            return RE::TESForm::LookupByID<RE::SpellItem>(kDetectLifeSpell);
+        }
+
+        void CastDetectLife()
+        {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!player || !player->Is3DLoaded() || player->IsDead()) {
+                return;
+            }
+            auto* item = DetectLifeItem();
+            if (!item) {
+                spdlog::error("Detect Life: neither the vanilla scroll {:08X} nor the spell {:08X} was found", kDetectLifeScroll, kDetectLifeSpell);
+                return;
+            }
+            auto* caster = player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
+            if (!caster) {
+                spdlog::error("Detect Life: no instant caster on the player");
+                return;
+            }
+            caster->CastSpellImmediate(item, false, player, 1.0f, false, 0.0f, nullptr);
+            const int active = ActiveEffectsFrom(item);
+            spdlog::info("Detect Life: cast (spell {:08X}) -> active effects {} of {}", item->GetFormID(), active, item->effects.size());
+            std::lock_guard lock(g_mutex);
+            g_detectCheckAt = RealSeconds() + 0.5;
+        }
+
+        void LogDetectLifeCheck()
+        {
+            if (auto* item = DetectLifeItem()) {
+                spdlog::info("Detect Life: 0.5 s after the cast (spell {:08X}) -> active effects {}", item->GetFormID(), ActiveEffectsFrom(item));
+            }
+        }
+
+        void StartComedownVisual(Core::DrugType type, int stack)
+        {
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            auto* imod    = handler ? handler->LookupForm<RE::TESImageSpaceModifier>(Forms::HighrimImodComedown, Forms::kPluginName) : nullptr;
+            if (!imod) {
+                spdlog::error("Comedown visual: image space modifier {:06X} not found in {}", Forms::HighrimImodComedown, Forms::kPluginName);
+                return;
+            }
+            const double strength = Core::StrengthForComedown(stack);
+            RE::ImageSpaceModifierInstanceForm::Trigger(imod, static_cast<float>(strength), nullptr);
+            {
+                std::lock_guard lock(g_mutex);
+                g_comedownActive = true;
+                g_comedownStop   = false;
+                g_comedownEnd    = RealSeconds() + Core::kComedownVisualSeconds;
+            }
+            spdlog::info("Comedown visual: started for {} ({:08X}, stack {}, strength {:.2f}) for {:.0f} s", DrugName(type), imod->GetFormID(), stack,
+                strength, Core::kComedownVisualSeconds);
+        }
+
+        void StopComedownVisual(const char* why)
+        {
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            auto* imod    = handler ? handler->LookupForm<RE::TESImageSpaceModifier>(Forms::HighrimImodComedown, Forms::kPluginName) : nullptr;
+            if (imod) {
+                RE::ImageSpaceModifierInstanceForm::Stop(imod);
+            }
+            spdlog::info("Comedown visual: stopped ({}){}", why, imod ? "" : " - image space modifier not found");
+        }
+
         void OnDrugConsumed(Core::DrugType type)
         {
             const auto settings = Config::Get();
@@ -338,6 +439,9 @@ namespace Highrim::Doses
                 Ragdoll::OnDepressantDose();
             }
             Core::ScheduleDiagnostics(g_diagnostics, type, RealSeconds());
+            if (type == Core::DrugType::kHallucinogen && !blackout) {
+                g_detectNext = RealSeconds();  // cast on the next tick, then every kDetectLifeRecastSeconds while the high lasts
+            }
             if (blackout || g_overdoseDue || g_blackoutDue) {
                 // A blackout is coming: no stack ability from here on (and the current one goes).
                 g_wantedLevel[i] = 0;
@@ -395,8 +499,9 @@ namespace Highrim::Doses
         bool                        runOverdose = false;
         bool                        runKnock    = false;
         bool                        blackoutPending = false;
-        std::vector<Core::DrugType> due;
+        std::vector<std::pair<Core::DrugType, int>> due;  // (drug, its stack when the high ended)
         std::vector<Core::DrugType> stops;
+        bool                        castDetect = false, checkDetect = false, stopComedown = false;
         std::vector<Core::DiagnosticEntry> diagnostics;
         std::vector<std::pair<Core::DrugType, double>> visuals;
         const bool                  uiBlocked = Blackout::MenuOrPauseActive();
@@ -440,7 +545,10 @@ namespace Highrim::Doses
             }
             blackoutPending = g_overdoseDue.has_value() || g_blackoutDue.has_value();
             while (auto d = Core::TakeDueComedown(g_comedowns, now)) {
-                due.push_back(*d);
+                due.emplace_back(*d, g_stacks.count[static_cast<std::size_t>(*d)]);
+                if (*d == Core::DrugType::kHallucinogen) {
+                    g_detectNext.reset();  // the high is over: no more Detect Life casts
+                }
                 // The high ends: its stack ability and screen effect go (the stack count keeps its own window).
                 g_wantedLevel[static_cast<std::size_t>(*d)] = 0;
                 g_visualDue[static_cast<std::size_t>(*d)].reset();
@@ -462,6 +570,22 @@ namespace Highrim::Doses
                 }
             }
             // The Velvet Haze high lasts from its dose until its comedown is taken above.
+            if (g_detectNext && now >= *g_detectNext && !busy && !blackoutPending && !runKnock) {
+                castDetect   = true;
+                g_detectNext = now + Core::kDetectLifeRecastSeconds;
+            }
+            if (g_detectCheckAt && now >= *g_detectCheckAt) {
+                g_detectCheckAt.reset();
+                checkDetect = true;
+            }
+            if (g_comedownStop || (g_comedownEnd && now >= *g_comedownEnd)) {
+                if (g_comedownActive) {
+                    stopComedown = true;
+                }
+                g_comedownActive = false;
+                g_comedownStop   = false;
+                g_comedownEnd.reset();
+            }
             ragdollActive = g_comedowns.dueSeconds[static_cast<std::size_t>(Core::DrugType::kDepressant)].has_value();
             ragdollStack  = g_stacks.count[static_cast<std::size_t>(Core::DrugType::kDepressant)];
             while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {
@@ -471,8 +595,20 @@ namespace Highrim::Doses
         for (auto d : stops) {
             StopVisual(d);
         }
-        for (auto d : due) {
+        if (stopComedown) {
+            StopComedownVisual("the comedown ended or the game state was reset");
+        }
+        for (const auto& [d, stack] : due) {
             CastComedown(d);
+            RE::SendHUDMessage::ShowHUDMessage(Core::ComedownMessage(d).c_str(), nullptr, false);
+            Diag::Schedule(ComedownLocalId(d), "comedown");
+            StartComedownVisual(d, stack);
+        }
+        if (castDetect) {
+            CastDetectLife();
+        }
+        if (checkDetect) {
+            LogDetectLifeCheck();
         }
         if (runKnock) {
             const char* route = Ragdoll::KnockNow("overdose");
@@ -508,6 +644,10 @@ namespace Highrim::Doses
         g_appliedLevel = { -1, -1, -1 };
         g_visualDue    = {};
         g_visualStop   = g_visualActive;  // the game thread stops whatever screen effect is still running
+        g_detectNext.reset();
+        g_detectCheckAt.reset();
+        g_comedownStop = g_comedownActive;  // the black-and-white comedown look goes too
+        g_comedownEnd.reset();
         ++g_epoch;
         Ragdoll::Reset();
     }

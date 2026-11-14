@@ -5,6 +5,7 @@
 #include "Blackout.h"
 #include "Config.h"
 #include "Core.h"
+#include "Diag.h"
 #include "Forms.h"
 #include "State.h"
 
@@ -77,8 +78,14 @@ namespace Highrim::Withdrawal
                 const bool added = player->AddSpell(spell);
                 spdlog::info("Withdrawal: tier {} -> {} ({}), AddSpell -> {}", before, plan.addTier, why, added);
                 if (!added && !player->HasSpell(spell)) return;  // retried next tick
+                Diag::Schedule(kAbilityIds[static_cast<std::size_t>(plan.addTier - 1)], fmt::format("withdrawal tier {}", plan.addTier));
             } else {
                 spdlog::info("Withdrawal: tier {} -> 0 ({})", before, why);
+            }
+            // The HUD message tells the player about a change, not about re-applying the same tier after a load
+            // (before = -1 then).
+            if (before != plan.addTier && before >= 0) {
+                RE::SendHUDMessage::ShowHUDMessage(Core::WithdrawalMessage(plan.addTier).c_str(), nullptr, false);
             }
             g_applied = plan.addTier;
         }

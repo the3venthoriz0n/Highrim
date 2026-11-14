@@ -4,8 +4,10 @@
 
 #include "Config.h"
 #include "Core.h"
+#include "Diag.h"
 #include "Doses.h"
 #include "Forms.h"
+#include "LostGear.h"
 #include "Prison.h"
 #include "Ragdoll.h"
 #include "Withdrawal.h"
@@ -35,7 +37,7 @@ namespace Highrim::Blackout
         // which run on the game thread too).
         double g_hangoverExpiry = 0.0;
 
-        enum class Phase { kIdle, kFadingOut, kBlack };
+        enum class Phase { kIdle, kFadingOut, kSettling, kBlack };
         std::atomic<Phase>                    g_phase{ Phase::kIdle };
         std::chrono::steady_clock::time_point g_deadline;
         std::string                           g_reason;
@@ -192,6 +194,44 @@ namespace Highrim::Blackout
             return missing;
         }
 
+        // What the settle check after the teleport needs (game thread only). The items are already in the chest at this
+        // point, so a move that never happens puts them back (Rollback) before the blackout is given up.
+        struct SettleContext
+        {
+            std::vector<Moved> moved;
+            RE::FormID         chest     = 0;
+            RE::FormID         spot      = 0;
+            std::size_t        holdIndex = 0;
+            std::string        holdName;
+            std::uint32_t      noteLocalId = 0;
+            Core::Point3       before{};
+            Core::Point3       target{};
+            int                method = 1;  // 1 = MoveTo, 2 = console moveto
+        };
+        SettleContext g_settle;
+        std::string   g_wakeMessage;
+
+        Core::Point3 PlayerPoint(RE::PlayerCharacter* player)
+        {
+            const auto p = player->GetPosition();
+            return { p.x, p.y, p.z };
+        }
+
+        // Method 2: the console command `player.moveto <marker>`, which handles a target in another cell or worldspace.
+        bool ConsoleMoveTo(RE::PlayerCharacter* player, RE::FormID target)
+        {
+            auto* factory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::Script>();
+            auto* script  = factory ? factory->Create() : nullptr;
+            if (!script) {
+                spdlog::error("Blackout: step 6: cannot create a console script");
+                return false;
+            }
+            script->SetCommand(fmt::format("player.moveto {:08X}", target));
+            script->CompileAndRun(player);
+            delete script;
+            return true;
+        }
+
         void Finish(bool success, int missing = 0)
         {
             StopImod(kFadeToBlackHold, "FadeToBlackHold");
@@ -200,7 +240,10 @@ namespace Highrim::Blackout
             if (success) {
                 auto* p = RE::PlayerCharacter::GetSingleton();
                 if (p && !p->IsDead()) {
-                    RE::SendHUDMessage::ShowHUDMessage("You wake up with a splitting headache.");
+                    RE::SendHUDMessage::ShowHUDMessage(g_wakeMessage.empty() ? "You wake up with a splitting headache." : g_wakeMessage.c_str());
+                    RE::SendHUDMessage::ShowHUDMessage(
+                        "Hangover: stamina is 30 points lower and regenerates 25% slower, and your vision blurs now and then, for one game day.",
+                        nullptr, false);
                 }
             }
             if (success) {
@@ -228,7 +271,117 @@ namespace Highrim::Blackout
             Finish(false, missing);
         }
 
-        // Steps 2 to 6 of the sequence, run once the screen is black. Game thread.
+        // Step 6b, once the player is known to be at the wake spot: note, game time, hangover, Lost Gear reminder.
+        void FinishStep6(RE::PlayerCharacter* player)
+        {
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            // LookupForm<T> requires T::FORMTYPE to equal the form type; TESBoundObject has none, so asking for it always
+            // failed ("note not found"). The note is a BOOK, so ask for TESObjectBOOK.
+            spdlog::info("Blackout: step 6: looking up the {} note: local id {:06X} in {}", g_settle.holdName, g_settle.noteLocalId, Forms::kPluginName);
+            auto* note = handler ? handler->LookupForm<RE::TESObjectBOOK>(g_settle.noteLocalId, Forms::kPluginName) : nullptr;
+            if (note) {
+                player->AddObjectToContainer(note, nullptr, 1, nullptr);
+                spdlog::info("Blackout: step 6: note given ({} {:08X}), player now has {}; text: {}", note->GetName(), note->GetFormID(),
+                    CountIn(player, note), Core::NoteText(g_settle.holdName + " prison"));
+            } else {
+                spdlog::error("Blackout: step 6: note for {} not found in {} (local id {:06X})", g_settle.holdName, Forms::kPluginName,
+                    g_settle.noteLocalId);
+            }
+
+            if (auto* calendar = RE::Calendar::GetSingleton(); calendar && calendar->gameHour && calendar->gameDaysPassed) {
+                const float hourBefore = calendar->gameHour->value;
+                float       hour       = hourBefore + 6.0f;
+                if (hour >= 24.0f) {
+                    hour -= 24.0f;
+                }
+                calendar->gameHour->value = hour;
+                calendar->gameDaysPassed->value += 0.25f;
+                spdlog::info("Blackout: step 6: game time advanced 6 h (hour {:.2f} -> {:.2f}, days passed {:.3f})", hourBefore, hour,
+                    calendar->gameDaysPassed->value);
+            } else {
+                spdlog::error("Blackout: step 6: no Calendar, game time not advanced");
+            }
+
+            if (auto* spell = HangoverSpell()) {
+                if (player->HasSpell(spell)) {
+                    spdlog::info("Blackout: step 6: hangover already active, not added again");
+                } else {
+                    const bool ok = player->AddSpell(spell);
+                    spdlog::info("Blackout: step 6: hangover ability added -> {}", ok);
+                }
+                Diag::Schedule(Forms::HighrimHangover, "hangover");
+                const double now = NowHours();
+                if (now >= 0.0) {
+                    g_hangoverExpiry = now + 24.0;
+                    spdlog::info("Blackout: step 6: hangover expires at game hour {:.2f}", g_hangoverExpiry);
+                }
+            } else {
+                spdlog::error("Blackout: step 6: hangover spell not found in {}", Forms::kPluginName);
+            }
+
+            LostGear::Begin(static_cast<int>(g_settle.holdIndex));
+            g_wakeMessage = Core::LostGearMessage(g_settle.holdName);
+            g_settle      = SettleContext{};
+
+            // Hold the black screen a moment, then Tick() finishes the fade back in.
+            g_phase    = Phase::kBlack;
+            g_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+            spdlog::info("Blackout: sequence done, holding black a moment longer");
+        }
+
+        // Called from Tick() (kSettling) when the settle delay has passed: did the player move?
+        void CheckSettle()
+        {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* chest  = RE::TESForm::LookupByID<RE::TESObjectREFR>(g_settle.chest);
+            std::string why;
+            if (g_runGeneration != g_generation.load()) {
+                why = "the game was loaded or reverted";
+            } else if (!player) {
+                why = "no player";
+            } else if (player->IsDead()) {
+                why = "the player died";
+            } else if (!chest) {
+                why = "the prison chest is gone";
+            }
+            if (!why.empty()) {
+                spdlog::error("Blackout: step 6: cannot go on: {}, rolling back", why);
+                int missing = 0;
+                if (chest && player) {
+                    missing = Rollback(player, chest, g_settle.moved);
+                }
+                g_settle = SettleContext{};
+                Abort("cancelled while settling after the teleport: " + why, player && !player->IsDead(), missing);
+                return;
+            }
+            const auto  after   = PlayerPoint(player);
+            const auto  verdict = Core::CheckMove(g_settle.before, g_settle.target, after);
+            const char* word    = verdict == Core::MoveVerdict::kMoved ? "moved"
+                                  : verdict == Core::MoveVerdict::kNotApplicable ? "target was already within 1000 units, cannot tell"
+                                                                                  : "NOT moved";
+            spdlog::info("Blackout: step 6: position after settle ({:.0f},{:.0f},{:.0f}) from ({:.0f},{:.0f},{:.0f}), target ({:.0f},{:.0f},{:.0f}): {} (method {})",
+                after.x, after.y, after.z, g_settle.before.x, g_settle.before.y, g_settle.before.z, g_settle.target.x, g_settle.target.y,
+                g_settle.target.z, word, g_settle.method == 1 ? "MoveTo" : "console moveto");
+            if (verdict != Core::MoveVerdict::kNotMoved) {
+                spdlog::info("Blackout: step 6: teleport method {} worked", g_settle.method == 1 ? "MoveTo" : "console moveto");
+                FinishStep6(player);
+                return;
+            }
+            if (g_settle.method == 1) {
+                g_settle.method = 2;
+                const bool ran  = ConsoleMoveTo(player, g_settle.spot);
+                spdlog::warn("Blackout: step 6: MoveTo did not move the player; trying the console moveto -> {}", ran);
+                g_deadline = std::chrono::steady_clock::now() +
+                             std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(Core::kMoveSettleSeconds));
+                return;
+            }
+            spdlog::error("Blackout: step 6: no teleport method moved the player, rolling back");
+            const int missing = Rollback(player, chest, g_settle.moved);
+            g_settle          = SettleContext{};
+            Abort("the teleport did not work", true, missing);
+        }
+
+        // Steps 2 to 6a of the sequence, run once the screen is black. Game thread.
         void DoWork()
         {
             auto* player = RE::PlayerCharacter::GetSingleton();
@@ -373,59 +526,30 @@ namespace Highrim::Blackout
                     return;
                 }
 
-                // Step 6: teleport, note, hangover, time.
+                // Step 6a: teleport. MoveTo is applied by the engine a moment later (the first playtest log read the position
+                // straight after the call and saw no change, but the player did wake up elsewhere), so the position is
+                // checked in Tick() after Core::kMoveSettleSeconds, still black. The rest of step 6 waits for that check.
                 spdlog::info("Blackout: step 6: teleporting to marker {:08X} (cell {})", spotRef->GetFormID(),
                     spotRef->GetParentCell() ? "attached" : "not attached, the saved cell is used by the engine");
-                const auto before = player->GetPosition();
+                g_settle             = SettleContext{};
+                g_settle.moved       = moved;
+                g_settle.chest       = chest->GetFormID();
+                g_settle.spot        = spotRef->GetFormID();
+                g_settle.holdIndex   = choice->index;
+                g_settle.holdName    = hold.def->name;
+                g_settle.noteLocalId = hold.def->noteLocalId;
+                g_settle.before      = PlayerPoint(player);
+                {
+                    const auto t    = spotRef->GetPosition();
+                    g_settle.target = { t.x, t.y, t.z };
+                }
                 player->MoveTo(spotRef);
-                const auto after = player->GetPosition();
-                spdlog::info("Blackout: step 6: position ({:.0f},{:.0f},{:.0f}) -> ({:.0f},{:.0f},{:.0f})", before.x, before.y, before.z,
-                    after.x, after.y, after.z);
-
-                auto* handler = RE::TESDataHandler::GetSingleton();
-                auto* note    = handler ? handler->LookupForm<RE::TESBoundObject>(hold.def->noteLocalId, Forms::kPluginName) : nullptr;
-                if (note) {
-                    player->AddObjectToContainer(note, nullptr, 1, nullptr);
-                    spdlog::info("Blackout: step 6: note given ({}), player now has {}; text: {}", note->GetName(), CountIn(player, note),
-                        Core::NoteText(std::string(hold.def->name) + " prison"));
-                } else {
-                    spdlog::error("Blackout: step 6: note for {} not found in {}", hold.def->name, Forms::kPluginName);
-                }
-
-                if (auto* calendar = RE::Calendar::GetSingleton(); calendar && calendar->gameHour && calendar->gameDaysPassed) {
-                    const float hourBefore = calendar->gameHour->value;
-                    float       hour       = hourBefore + 6.0f;
-                    if (hour >= 24.0f) {
-                        hour -= 24.0f;
-                    }
-                    calendar->gameHour->value = hour;
-                    calendar->gameDaysPassed->value += 0.25f;
-                    spdlog::info("Blackout: step 6: game time advanced 6 h (hour {:.2f} -> {:.2f}, days passed {:.3f})", hourBefore, hour,
-                        calendar->gameDaysPassed->value);
-                } else {
-                    spdlog::error("Blackout: step 6: no Calendar, game time not advanced");
-                }
-
-                if (auto* spell = HangoverSpell()) {
-                    if (player->HasSpell(spell)) {
-                        spdlog::info("Blackout: step 6: hangover already active, not added again");
-                    } else {
-                        const bool ok = player->AddSpell(spell);
-                        spdlog::info("Blackout: step 6: hangover ability added -> {}", ok);
-                    }
-                    const double now = NowHours();
-                    if (now >= 0.0) {
-                        g_hangoverExpiry = now + 24.0;
-                        spdlog::info("Blackout: step 6: hangover expires at game hour {:.2f}", g_hangoverExpiry);
-                    }
-                } else {
-                    spdlog::error("Blackout: step 6: hangover spell not found in {}", Forms::kPluginName);
-                }
-
-                // Hold the black screen a moment, then Tick() finishes the fade back in.
-                g_phase    = Phase::kBlack;
-                g_deadline = std::chrono::steady_clock::now() + kBlackTime;
-                spdlog::info("Blackout: sequence done, holding black for {} ms", kBlackTime.count());
+                const auto right = PlayerPoint(player);
+                spdlog::info("Blackout: step 6: position ({:.0f},{:.0f},{:.0f}) -> ({:.0f},{:.0f},{:.0f}) right after MoveTo (applied a moment later; checked after {:.1f} s)",
+                    g_settle.before.x, g_settle.before.y, g_settle.before.z, right.x, right.y, right.z, Core::kMoveSettleSeconds);
+                g_phase    = Phase::kSettling;
+                g_deadline = std::chrono::steady_clock::now() +
+                             std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(Core::kMoveSettleSeconds));
             } catch (const std::exception& e) {
                 spdlog::error("Blackout: exception: {}", e.what());
                 int missing = 0;
@@ -453,6 +577,13 @@ namespace Highrim::Blackout
             if (g_phase == Phase::kFadingOut && now >= g_deadline) {
                 TriggerImod(kFadeToBlackHold, "FadeToBlackHold");
                 DoWork();
+            } else if (g_phase == Phase::kSettling && now >= g_deadline) {
+                try {
+                    CheckSettle();
+                } catch (...) {
+                    spdlog::error("Blackout: exception while settling after the teleport");
+                    Abort("unexpected error", true);
+                }
             } else if (g_phase == Phase::kBlack && now >= g_deadline) {
                 Finish(true);
             }
@@ -535,6 +666,8 @@ namespace Highrim::Blackout
             TickHangover();
             Doses::Tick();
             Withdrawal::Tick();
+            Diag::Tick();
+            LostGear::Tick();
         }
 
         void PollerLoop()
@@ -586,6 +719,8 @@ namespace Highrim::Blackout
         BumpGeneration("game loaded or new game");
         g_wasDead = false;
         g_phase   = Phase::kIdle;
+        g_settle  = SettleContext{};
+        g_wakeMessage.clear();
         if (g_needCleanup.exchange(false)) {
             StopImod(kFadeToBlack, "FadeToBlack");
             StopImod(kFadeToBlackHold, "FadeToBlackHold");
@@ -671,6 +806,7 @@ namespace Highrim::Blackout
         if (player->HasSpell(spell)) {
             const bool ok = player->RemoveSpell(spell);
             spdlog::info("Blackout: hangover expired at game hour {:.2f}, ability removed -> {}", now, ok);
+            RE::SendHUDMessage::ShowHUDMessage("The hangover wears off.");
         } else {
             spdlog::info("Blackout: hangover expired at game hour {:.2f}, ability was not on the player", now);
         }

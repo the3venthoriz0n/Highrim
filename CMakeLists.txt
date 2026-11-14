@@ -35,6 +35,10 @@ set(PROJECT_SOURCES
     src/Ragdoll.cpp
     src/Withdrawal.h
     src/Withdrawal.cpp
+    src/Diag.h
+    src/Diag.cpp
+    src/LostGear.h
+    src/LostGear.cpp
 )
 
 add_commonlibsse_plugin(${PROJECT_NAME}
@@ -82,5 +86,6 @@ add_test(NAME HighrimTests COMMAND HighrimTests)
 if(Python3_Interpreter_FOUND)
     add_test(NAME EspTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esp.py")
     add_test(NAME GameDataTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_game_data.py")
+    add_test(NAME SourceTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_sources.py")
     add_test(NAME NgRelocationTests COMMAND ${Python3_EXECUTABLE} -I "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ng_relocations.py")
 endif()

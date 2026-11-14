@@ -4,7 +4,9 @@
 
 #include "Blackout.h"
 #include "Doses.h"
+#include "Diag.h"
 #include "Forms.h"
+#include "LostGear.h"
 #include "Withdrawal.h"
 
 namespace Highrim::State
@@ -21,6 +23,7 @@ namespace Highrim::State
                 g_addiction = Core::Addiction{};
             }
             Blackout::SetHangoverExpiryHours(0.0);
+            LostGear::Set(-1, 0.0);
             Blackout::OnStateReset("revert or load");
         }
 
@@ -39,12 +42,15 @@ namespace Highrim::State
                 p.addiction = g_addiction;
             }
             p.hangoverExpiryHours = Blackout::GetHangoverExpiryHours();
+            p.lostGearHold        = LostGear::GetHold();
+            p.lostGearExpiryHours = LostGear::GetExpiryHours();
             const std::string text = Core::SerializeState(p);
             if (!intfc->WriteRecord(kRecordId, kRecordVersion, text.data(), static_cast<std::uint32_t>(text.size()))) {
                 spdlog::error("State: failed to write the co-save record");
                 return;
             }
-            spdlog::info("State: saved ({} bytes), hangover expiry {:.2f}", text.size(), p.hangoverExpiryHours);
+            spdlog::info("State: saved ({} bytes), hangover expiry {:.2f}, lost gear hold {} until {:.2f}", text.size(),
+                p.hangoverExpiryHours, p.lostGearHold, p.lostGearExpiryHours);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc)
@@ -58,7 +64,7 @@ namespace Highrim::State
                     continue;
                 }
                 found = true;
-                if (version != kRecordVersion || length == 0 || length > 4096) {
+                if ((version != 1 && version != kRecordVersion) || length == 0 || length > 4096) {
                     spdlog::error("State: unusable record (version {}, length {}), reset to zero", version, length);
                     continue;
                 }
@@ -77,6 +83,7 @@ namespace Highrim::State
                     g_addiction = parsed->addiction;
                 }
                 Blackout::SetHangoverExpiryHours(parsed->hangoverExpiryHours);
+                LostGear::Set(parsed->lostGearHold, parsed->lostGearExpiryHours);
                 spdlog::info("State: loaded, levels {:.1f}/{:.1f}/{:.1f}, hangover expiry {:.2f}",
                     parsed->addiction.level[0], parsed->addiction.level[1], parsed->addiction.level[2],
                     parsed->hangoverExpiryHours);
@@ -126,6 +133,8 @@ namespace Highrim::State
     {
         Blackout::OnGameLoaded();
         Withdrawal::OnGameLoaded();
+        Diag::Clear();
+        LostGear::OnGameLoaded();
         Doses::CancelComedowns();
         double expiry   = Blackout::GetHangoverExpiryHours();
         auto*  calendar = RE::Calendar::GetSingleton();

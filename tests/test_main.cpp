@@ -187,6 +187,89 @@ namespace
         // The full blackout is its own gate.
         CHECK(FullBlackoutAllowed(true) && !FullBlackoutAllowed(false));
 
+        // Overdose rolls (Task 16): chance 15% per dose from the threshold, capped at 60%.
+        {
+            CHECK(kFullBlackoutChanceStep == 0.15 && kFullBlackoutChanceCap == 0.60 && kFaintChance == 0.5);
+            CHECK(FullBlackoutChance(3, 4) == 0.0 && FullBlackoutChance(0, 4) == 0.0);
+            CHECK(std::fabs(FullBlackoutChance(4, 4) - 0.15) < 1e-9);
+            CHECK(std::fabs(FullBlackoutChance(5, 4) - 0.30) < 1e-9);
+            CHECK(std::fabs(FullBlackoutChance(6, 4) - 0.45) < 1e-9);
+            CHECK(std::fabs(FullBlackoutChance(7, 4) - 0.60) < 1e-9);
+            CHECK(FullBlackoutChance(8, 4) == 0.60 && FullBlackoutChance(99, 4) == 0.60);
+            CHECK(std::fabs(FullBlackoutChance(2, 2) - 0.15) < 1e-9);
+            CHECK(std::fabs(FullBlackoutChance(2, 0) - 0.15) < 1e-9);   // a bad threshold counts as the minimum of 2
+            CHECK(FullBlackoutChance(1, -3) == 0.0);
+            // below the threshold nothing is rolled, whatever the random numbers are
+            CHECK(RollOverdose(3, 4, 0.0, 0.0) == OverdoseOutcome::kNone);
+            // at threshold 4, total 4: full when the first roll is below 15%, else faint when the second is below 50%
+            CHECK(RollOverdose(4, 4, 0.0, 0.99) == OverdoseOutcome::kFull);
+            CHECK(RollOverdose(4, 4, 0.149, 0.99) == OverdoseOutcome::kFull);
+            CHECK(RollOverdose(4, 4, 0.15, 0.0) == OverdoseOutcome::kFaint);   // not below the chance: no full
+            CHECK(RollOverdose(4, 4, 0.99, 0.499) == OverdoseOutcome::kFaint);
+            CHECK(RollOverdose(4, 4, 0.99, 0.5) == OverdoseOutcome::kNone);
+            CHECK(RollOverdose(4, 4, 0.99, 0.99) == OverdoseOutcome::kNone);
+            CHECK(RollOverdose(7, 4, 0.59, 0.99) == OverdoseOutcome::kFull && RollOverdose(7, 4, 0.60, 0.99) == OverdoseOutcome::kNone);
+            CHECK(RollOverdose(50, 4, 0.61, 0.0) == OverdoseOutcome::kFaint);   // capped at 60%
+            CHECK(RollOverdose(4, 4, nan, nan) == OverdoseOutcome::kNone);      // a broken random number never overdoses
+            // statistics over an even grid of the two random numbers: full 15%, faint 85% * 50% = 42.5%
+            {
+                int full = 0, faint = 0, none = 0;
+                for (int a = 0; a < 100; ++a)
+                    for (int b = 0; b < 100; ++b) {
+                        const auto o = RollOverdose(4, 4, (a + 0.5) / 100.0, (b + 0.5) / 100.0);
+                        (o == OverdoseOutcome::kFull ? full : o == OverdoseOutcome::kFaint ? faint : none)++;
+                    }
+                CHECK(full == 1500 && faint == 4250 && none == 4250);
+            }
+            // risk tier: 0 none, 1 low (1 to threshold-2), 2 elevated (threshold-1), 3 high (threshold or more)
+            CHECK(OverdoseRiskTier(0, 4) == RiskTier::kNone && OverdoseRiskTier(-1, 4) == RiskTier::kNone);
+            CHECK(OverdoseRiskTier(1, 4) == RiskTier::kLow && OverdoseRiskTier(2, 4) == RiskTier::kLow);
+            CHECK(OverdoseRiskTier(3, 4) == RiskTier::kElevated);
+            CHECK(OverdoseRiskTier(4, 4) == RiskTier::kHigh && OverdoseRiskTier(9, 4) == RiskTier::kHigh);
+            CHECK(OverdoseRiskTier(1, 8) == RiskTier::kLow && OverdoseRiskTier(6, 8) == RiskTier::kLow);
+            CHECK(OverdoseRiskTier(7, 8) == RiskTier::kElevated && OverdoseRiskTier(8, 8) == RiskTier::kHigh);
+            // threshold 3: low is total 1; threshold 2: low is skipped (1 is already elevated)
+            CHECK(OverdoseRiskTier(1, 3) == RiskTier::kLow && OverdoseRiskTier(2, 3) == RiskTier::kElevated);
+            CHECK(OverdoseRiskTier(1, 2) == RiskTier::kElevated && OverdoseRiskTier(2, 2) == RiskTier::kHigh);
+            CHECK(OverdoseRiskTier(1, 0) == RiskTier::kElevated && OverdoseRiskTier(2, 1) == RiskTier::kHigh);  // threshold below 2 counts as 2
+            CHECK(static_cast<int>(RiskTier::kNone) == 0 && static_cast<int>(RiskTier::kHigh) == 3);
+            CHECK(std::string(RiskTierName(RiskTier::kLow)) == "Overdose Risk: Low");
+            CHECK(std::string(RiskTierName(RiskTier::kElevated)) == "Overdose Risk: Elevated");
+            CHECK(std::string(RiskTierName(RiskTier::kHigh)) == "Overdose Risk: High");
+            CHECK(std::string(RiskTierName(RiskTier::kNone)).empty());
+            CHECK(RiskVisualStrength(RiskTier::kNone) == 0.0 && RiskVisualStrength(RiskTier::kLow) == 0.0);
+            CHECK(RiskVisualStrength(RiskTier::kElevated) == 0.4 && RiskVisualStrength(RiskTier::kHigh) == 0.8);
+            CHECK(RiskTierRose(RiskTier::kNone, RiskTier::kLow) && RiskTierRose(RiskTier::kLow, RiskTier::kHigh));
+            CHECK(!RiskTierRose(RiskTier::kHigh, RiskTier::kHigh) && !RiskTierRose(RiskTier::kHigh, RiskTier::kLow));
+            CHECK(!RiskTierRose(RiskTier::kLow, RiskTier::kNone));
+            // the dose total counts only while it is inside the window of the last dose
+            {
+                DoseTotals t{};
+                CHECK(ActiveDoseTotal(t, 10.0, 120) == 0);          // no dose yet
+                AddAnyDose(t, 10.0, 120);
+                AddAnyDose(t, 10.5, 120);
+                CHECK(ActiveDoseTotal(t, 10.5, 120) == 2);
+                CHECK(ActiveDoseTotal(t, 12.5, 120) == 2);          // exactly the window
+                CHECK(ActiveDoseTotal(t, 12.6, 120) == 0);          // expired
+                CHECK(ActiveDoseTotal(t, 9.0, 120) == 0);           // clock went backwards: not inside the window
+                CHECK(ActiveDoseTotal(t, 10.6, 0) == 0);            // bad window
+                CHECK(ActiveDoseTotal(t, nan, 120) == 0);
+            }
+        }
+        // Faint: a hangover of 4 game hours that never shortens a longer one.
+        {
+            CHECK(kFaintHangoverHours == 4.0 && kFaintGameHours == 1.0 && kFaintTotalSeconds == 6.0);
+            CHECK(FaintHangoverExpiry(0.0, 100.0) == 104.0);
+            CHECK(FaintHangoverExpiry(101.0, 100.0) == 104.0);        // a shorter one is replaced
+            CHECK(FaintHangoverExpiry(124.0, 100.0) == 124.0);        // a longer one stays
+            CHECK(FaintHangoverExpiry(nan, 100.0) == 104.0 && FaintHangoverExpiry(-5.0, 100.0) == 104.0);
+            CHECK(FaintHangoverExpiry(50.0, nan) == 50.0);            // no usable clock: nothing changes
+            CHECK(std::string(FaintStartMessage()) == "You pass out for a moment...");
+            CHECK(std::string(FaintEndMessage()) == "You come to, head pounding.");
+            CHECK(std::string(RiskRiseMessage(RiskTier::kLow)) == "Overdose Risk: Low. Your body is handling it, for now.");
+            CHECK(std::string(RiskRiseMessage(RiskTier::kNone)).empty());
+        }
+
         // Rimerush withdrawal drain.
         CHECK(RimerushDrainActive(10.f, 4.0) && !RimerushDrainActive(9.9f, 50.0) && !RimerushDrainActive(50.f, 3.99));
         {

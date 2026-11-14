@@ -28,7 +28,8 @@ namespace Highrim::Core
     // 1, a clock that went backwards or a non-finite time restarts at 1.
     int  AddStackedDose(DoseStacks& s, DrugType type, double nowHours, int windowMinutes);
     void ResetStacks(DoseStacks& s);
-    // True when the stack has reached the blackout dose count (a count below 2 is treated as 2).
+    // True when the total has reached the overdose dose count, the threshold from which every dose rolls (a count below 2
+    // is treated as 2).
     bool ShouldBlackout(int stack, int blackoutDoses);
     // 0 for stack 1 (the potion alone), 1..kMaxStackLevel for stacks 2 and up.
     int StackLevel(int stack);
@@ -43,6 +44,9 @@ namespace Highrim::Core
         double lastHours{ -1 };
     };
     int AddAnyDose(DoseTotals& t, double nowHours, int windowMinutes);
+    // The total while it is still inside the window of the last dose (0 when there is no dose, the window is below 1, the
+    // clock went backwards, the time is not finite or the window has run out): what the overdose risk indicator shows.
+    int ActiveDoseTotal(const DoseTotals& t, double nowHours, int windowMinutes);
 
     // Velvet Haze screen effect strength: kVelvetStrengthBase at stack 1, plus kVelvetStrengthStep per extra stack, capped at 1.
     inline constexpr double kVelvetStrengthBase = 0.5;
@@ -267,6 +271,38 @@ namespace Highrim::Core
     inline double BlackoutStartAfterKnock(double knockSeconds) { return knockSeconds + kRagdollFirstSeconds; }
     enum class OverdoseAction { kWait, kRun, kDrop };
     OverdoseAction DecideOverdose(double nowSeconds, double dueSeconds, bool uiBlocked);
+
+    // Overdose rolls (Task 16). Every counted dose whose total is at or above the threshold rolls a FULL blackout with
+    // chance min(kFullBlackoutChanceCap, kFullBlackoutChanceStep * (total - threshold + 1)); if that fails a faint happens
+    // with probability kFaintChance; otherwise nothing. The random numbers (0..1) are passed in so this is testable. A
+    // threshold below 2 counts as 2; a non-finite random number never causes an outcome.
+    inline constexpr double kFullBlackoutChanceStep = 0.15;
+    inline constexpr double kFullBlackoutChanceCap  = 0.60;
+    inline constexpr double kFaintChance            = 0.5;
+    enum class OverdoseOutcome { kNone, kFaint, kFull };
+    double          FullBlackoutChance(int total, int threshold);  // 0 below the threshold
+    OverdoseOutcome RollOverdose(int total, int threshold, double rng01a, double rng01b);
+
+    // Overdose risk indicator: a lasting ability by tier while the dose total is inside the window. Low = total 1 to
+    // threshold-2, Elevated = threshold-1, High = threshold or more (a threshold below 2 counts as 2, so with a threshold
+    // of 2 the Low tier does not exist). The screen warning starts at Elevated (0.4) and High (0.8).
+    enum class RiskTier { kNone = 0, kLow = 1, kElevated = 2, kHigh = 3 };
+    RiskTier    OverdoseRiskTier(int total, int threshold);
+    const char* RiskTierName(RiskTier tier);         // "Overdose Risk: Low" ...; "" for kNone (same text as tools/make_esp.py)
+    const char* RiskTierDescription(RiskTier tier);  // the ability's plain description; "" for kNone
+    std::string RiskRiseMessage(RiskTier tier);      // HUD text when the tier rises: name, then description
+    double      RiskVisualStrength(RiskTier tier);   // 0 for None and Low, 0.4 Elevated, 0.8 High
+    bool        RiskTierRose(RiskTier before, RiskTier after);
+
+    // Faint (Task 16): the milder, common overdose outcome. After the knock-down the screen fades to black for about
+    // kFaintTotalSeconds real seconds, kFaintGameHours game hours pass and a hangover of kFaintHangoverHours game hours
+    // starts (a longer hangover already running is kept). No item moves, no teleport, no note.
+    inline constexpr double kFaintTotalSeconds   = 6.0;
+    inline constexpr double kFaintGameHours      = 1.0;
+    inline constexpr double kFaintHangoverHours  = 4.0;
+    double      FaintHangoverExpiry(double currentExpiryHours, double nowHours);  // max(current, now + 4); now not finite: current
+    const char* FaintStartMessage();
+    const char* FaintEndMessage();
 
     struct Point { float x, y; };
 

@@ -47,6 +47,13 @@ namespace Highrim::Core
         return t.count;
     }
 
+    int ActiveDoseTotal(const DoseTotals& t, double nowHours, int windowMinutes)
+    {
+        if (windowMinutes < 1 || t.count <= 0 || !std::isfinite(nowHours) || !std::isfinite(t.lastHours) || t.lastHours < 0.0) return 0;
+        const double elapsed = nowHours - t.lastHours;
+        return elapsed >= 0.0 && elapsed <= static_cast<double>(windowMinutes) / 60.0 ? t.count : 0;
+    }
+
     double StrengthForVelvetStack(int stack)
     {
         if (stack < 1) return kVelvetStrengthBase;
@@ -476,6 +483,88 @@ namespace Highrim::Core
         if (nowSeconds < dueSeconds) return OverdoseAction::kWait;
         if (!uiBlocked) return OverdoseAction::kRun;
         return nowSeconds - dueSeconds >= kOverdoseGiveUpSeconds ? OverdoseAction::kDrop : OverdoseAction::kWait;
+    }
+
+    double FullBlackoutChance(int total, int threshold)
+    {
+        const int t = std::max(threshold, 2);
+        if (total < t) return 0.0;
+        return std::min(kFullBlackoutChanceCap, kFullBlackoutChanceStep * static_cast<double>(total - t + 1));
+    }
+
+    OverdoseOutcome RollOverdose(int total, int threshold, double rng01a, double rng01b)
+    {
+        const double chance = FullBlackoutChance(total, threshold);
+        if (chance <= 0.0) return OverdoseOutcome::kNone;
+        if (rng01a < chance) return OverdoseOutcome::kFull;  // false for a NaN
+        if (rng01b < kFaintChance) return OverdoseOutcome::kFaint;
+        return OverdoseOutcome::kNone;
+    }
+
+    RiskTier OverdoseRiskTier(int total, int threshold)
+    {
+        const int t = std::max(threshold, 2);
+        if (total <= 0) return RiskTier::kNone;
+        if (total >= t) return RiskTier::kHigh;
+        if (total == t - 1) return RiskTier::kElevated;
+        return RiskTier::kLow;
+    }
+
+    const char* RiskTierName(RiskTier tier)
+    {
+        switch (tier) {
+        case RiskTier::kLow: return "Overdose Risk: Low";
+        case RiskTier::kElevated: return "Overdose Risk: Elevated";
+        case RiskTier::kHigh: return "Overdose Risk: High";
+        default: return "";
+        }
+    }
+
+    const char* RiskTierDescription(RiskTier tier)
+    {
+        switch (tier) {
+        case RiskTier::kLow: return "Your body is handling it, for now.";
+        case RiskTier::kElevated: return "Your heart is racing. One more dose could knock you out.";
+        case RiskTier::kHigh: return "You are on the edge. Another dose may put you on the floor, or worse.";
+        default: return "";
+        }
+    }
+
+    std::string RiskRiseMessage(RiskTier tier)
+    {
+        if (tier == RiskTier::kNone) return {};
+        return std::string(RiskTierName(tier)) + ". " + RiskTierDescription(tier);
+    }
+
+    double RiskVisualStrength(RiskTier tier)
+    {
+        switch (tier) {
+        case RiskTier::kElevated: return 0.4;
+        case RiskTier::kHigh: return 0.8;
+        default: return 0.0;
+        }
+    }
+
+    bool RiskTierRose(RiskTier before, RiskTier after)
+    {
+        return static_cast<int>(after) > static_cast<int>(before);
+    }
+
+    double FaintHangoverExpiry(double currentExpiryHours, double nowHours)
+    {
+        const double current = std::isfinite(currentExpiryHours) && currentExpiryHours > 0.0 ? currentExpiryHours : 0.0;
+        if (!std::isfinite(nowHours)) return current;
+        return std::max(current, nowHours + kFaintHangoverHours);
+    }
+
+    const char* FaintStartMessage()
+    {
+        return "You pass out for a moment...";
+    }
+
+    const char* FaintEndMessage()
+    {
+        return "You come to, head pounding.";
     }
 
     std::uint32_t WorldRoot(std::uint32_t world, const WorldParents& parents)

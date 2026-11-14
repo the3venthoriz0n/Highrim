@@ -50,3 +50,7 @@ Cooking-pot recipes from vanilla ingredients (COBJ, bench keyword CraftingCookpo
 Reuse what Sleep Together proved: C++23 SKSE plugin with CommonLibSSE-NG, CMake + vcpkg, MCM Helper config with a generated
 plugin ESP, generated release zips, tests for pure logic, noreply commits, a private GitHub repo. Items and effects are data
 (a generated ESP); addiction, blackout and relocation are plugin code.
+
+## Dense effect lists (Task 17)
+A potion or ability that lists many effects is unreadable in a tooltip (Rimerush listed 22). The 54 per-skill magic effects (Rimerush potion, Rimerush stack abilities, withdrawal tiers) carry the Hide in UI flag (bit 15, `0x00008000`, checked against Skyrim.esm; not 0x00040000) and stay applied. One visible descriptor effect per group shows the buff or penalty: "All Skills Boosted" (potion and stack abilities) and "All Skills Reduced" (withdrawal), each a Fortify-style clone on Variable10 (actor value 77, unused by vanilla magic effects) whose magnitude is the tier value, so it has no gameplay effect of its own. Rimerush's potion shows 5 lines (Health, Magicka, Stamina, All Skills Boosted, Highly Addictive). The diagnostics count visible and hidden effects together (Rimerush 23). Whether the game really hides flagged effects is unverified.
+

@@ -7,6 +7,12 @@ namespace Highrim::Blackout
     // True from Run() until the fade back in has finished.
     [[nodiscard]] bool Busy();
 
+    // The third gate (bFullBlackout, default OFF): may the FULL blackout sequence run (items to the prison chest, teleport,
+    // note, Lost Gear, 6 h skip)? Every trigger asks this; when false the caller logs
+    // "Blackout skipped: full blackout is off" (there is no milder faint yet; Task 16 adds one). Independent of bOverdose
+    // (master switch of the overdose system) and bRimerushWithdrawalBlackout (the depletion trigger).
+    [[nodiscard]] bool FullBlackoutAllowed();
+
     // Starts the blackout sequence (see Blackout.cpp). Game thread only. Ignored when busy, disabled, dead,
     // in combat, in a menu or when the player is not controllable.
     void Run(const char* reason);

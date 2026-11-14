@@ -7,9 +7,13 @@
 #include "Core.h"
 #include "Diag.h"
 #include "Forms.h"
+#include "Ragdoll.h"
 #include "State.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <optional>
 #include <random>
 
 namespace Highrim::Withdrawal
@@ -31,6 +35,37 @@ namespace Highrim::Withdrawal
         std::array<int, 3>    g_addicted{ -1, -1, -1 };  // 1 = the player carries "Addicted: <drug>", 0 = not, -1 = unknown
         std::optional<Core::Addiction> g_prev;           // the addiction state at the previous poll (to see doses)
         double                g_nextPoll = 0.0;
+
+        // --- Rimerush withdrawal drain (game thread only) ---------------------------------------------------------
+        constexpr double kDrainPollSeconds = 1.0;
+        constexpr double kDrainMaxStepSeconds = 3.0;   // a long gap (menu, load) never drains more than this at once
+        constexpr double kDrainGiveUpSeconds  = 30.0;  // a blackout that cannot start (combat, controls) is dropped after this
+        constexpr std::array<RE::ActorValue, 3> kBars{ RE::ActorValue::kHealth, RE::ActorValue::kMagicka, RE::ActorValue::kStamina };
+        constexpr std::array<const char*, 3>    kBarNames{ "Health", "Magicka", "Stamina" };
+        bool                  g_drainActive = false;
+        int                   g_drainStage  = 0;
+        double                g_drainNext   = 0.0;
+        double                g_drainLast   = 0.0;
+        double                g_pauseUntil  = 0.0;
+        std::array<double, 3> g_lastSet{ std::nan(""), std::nan(""), std::nan("") };
+        bool                  g_depleted    = false;         // depletion already handled in this drain
+        std::optional<double> g_blackoutDue;                 // real seconds: the blackout starts then (after the knock)
+        double                g_blackoutDueFirst = 0.0;      // when the depletion happened (for the give-up time)
+        std::uint32_t         g_blackoutGen = 0;
+        bool                  g_awaitRestore = false;        // the blackout was started: restore the bars when it ends
+        bool                  g_blackoutSeen = false;
+
+        void ResetDrain(const char* why)
+        {
+            if (g_drainActive || g_blackoutDue || g_awaitRestore) spdlog::info("Rimerush drain: reset ({})", why);
+            g_drainActive = false;
+            g_drainStage  = 0;
+            g_depleted    = false;
+            g_lastSet     = { std::nan(""), std::nan(""), std::nan("") };
+            g_blackoutDue.reset();
+            g_awaitRestore = false;
+            g_blackoutSeen = false;
+        }
         std::optional<double> g_blurDue;
 
         double RealSeconds()
@@ -159,8 +194,182 @@ namespace Highrim::Withdrawal
         }
     }
 
+    // Bars after a Rimerush withdrawal blackout: each is raised to kDrainBlackoutRestoreFraction of its maximum (never lowered).
+    static void RestoreBars(RE::PlayerCharacter* player)
+    {
+        auto* owner = player->AsActorValueOwner();
+        if (!owner) return;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const double max     = player->GetActorValueMax(kBars[i]);
+            const double current = owner->GetActorValue(kBars[i]);
+            const double target  = max * Core::kDrainBlackoutRestoreFraction;
+            if (current < target) owner->RestoreActorValue(kBars[i], static_cast<float>(target - current));
+            spdlog::info("Rimerush drain: {} restored {:.1f} -> {:.1f} (max {:.1f})", kBarNames[i], current, std::max(current, target), max);
+        }
+    }
+
+    // Once per real second. Drains Health, Magicka and Stamina while the Rimerush withdrawal condition holds (see Core.h).
+    static void DrainTick(double now)
+    {
+        if (now < g_drainNext) return;
+        g_drainNext = now + kDrainPollSeconds;
+
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        auto* ui     = RE::UI::GetSingleton();
+        if (!player || !player->Is3DLoaded() || !player->GetParentCell() || !ui || ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) ||
+            ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+            return;
+        }
+        const auto settings = Config::Get();
+
+        // A blackout we started: nothing drains while it runs; when it ends the bars are restored and the drain pauses.
+        if (g_awaitRestore) {
+            if (Blackout::Busy()) {
+                g_blackoutSeen = true;
+                g_drainLast    = now;
+                return;
+            }
+            if (g_blackoutSeen) {
+                const bool sameGame = Blackout::Generation() == g_blackoutGen;
+                ResetDrain("blackout ended");
+                if (sameGame && !player->IsDead()) {
+                    RestoreBars(player);
+                    g_pauseUntil = now + Core::kDrainPauseSeconds;
+                    spdlog::info("Rimerush drain: blackout over, bars restored to 25%, drain paused for {:.0f} s", Core::kDrainPauseSeconds);
+                }
+                return;
+            }
+            // Run() was requested but never started (a guard refused it): fall through to the due-time handling below.
+            g_awaitRestore = false;
+        }
+
+        const bool on = settings.enabled && settings.addiction;
+        bool       active = false;
+        double     level = 0.0, intoWithdrawal = 0.0, since = 0.0;
+        if (on && !player->IsDead()) {
+            const double hours = NowHours();
+            if (hours < 0.0) return;
+            auto snap = State::Snapshot();
+            Core::Decay(snap, hours);
+            level = snap.level[0];
+            since = snap.lastDoseHours[0] < 0.0 ? 1e9 : hours - snap.lastDoseHours[0];
+            intoWithdrawal = since - Core::kWithdrawalGraceHours;
+            active         = Core::RimerushDrainActive(static_cast<float>(level), since) && now >= g_pauseUntil;
+        }
+
+        if (!active) {
+            if (g_drainActive) {
+                const bool dose = on && since < Core::kWithdrawalGraceHours;
+                spdlog::info("Rimerush drain: stopped ({})", dose ? "a Rimerush dose was taken" : "no longer in withdrawal or paused or off");
+                if (dose) RE::SendHUDMessage::ShowHUDMessage(Core::RimerushDrainStopMessage(), nullptr, false);
+            }
+            ResetDrain("not active");
+            return;
+        }
+        if (UiBlocksPulse()) {  // a menu is open or the game is paused: no drain, and the clock does not run
+            g_drainLast = now;
+            return;
+        }
+
+        auto* owner = player->AsActorValueOwner();
+        if (!owner) return;
+        if (!g_drainActive) {
+            g_drainActive = true;
+            g_drainStage  = 0;
+            g_drainLast   = now;
+            g_depleted    = false;
+            g_lastSet     = { std::nan(""), std::nan(""), std::nan("") };
+            spdlog::info("Rimerush drain: started (level {:.1f}, {:.1f} h into withdrawal)", level, intoWithdrawal);
+            RE::SendHUDMessage::ShowHUDMessage(Core::RimerushDrainStartMessage(), nullptr, false);
+        }
+
+        const double dt   = std::clamp(now - g_drainLast, 0.0, kDrainMaxStepSeconds);
+        g_drainLast       = now;
+        const double rate = Core::RimerushDrainPerSecond(level, intoWithdrawal);
+        std::array<double, 3> after{};
+        double                lowest = 1.0;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const double current = owner->GetActorValue(kBars[i]);
+            const double base    = Core::DrainBaseValue(current, g_lastSet[i], Core::kRegenRiseLimit);  // cancels natural regeneration
+            const double floor   = i == 0 ? Core::kHealthDrainFloor : 0.0;
+            const double target  = Core::DrainedValue(base, rate, dt, floor);
+            if (target < current) owner->DamageActorValue(kBars[i], static_cast<float>(current - target));
+            after[i]     = std::min(current, target);
+            g_lastSet[i] = after[i];
+            const double max = player->GetActorValueMax(kBars[i]);
+            if (max > 0.0) lowest = std::min(lowest, after[i] / max);
+        }
+        const int stage = Core::DrainWarningStage(lowest);
+        if (stage > g_drainStage) {
+            g_drainStage = stage;
+            const char* text = stage == 1 ? "Rimerush withdrawal: your reserves are half gone. You need more Rimerush."
+                                          : "Rimerush withdrawal: you are almost out. You need more Rimerush now.";
+            RE::SendHUDMessage::ShowHUDMessage(text, nullptr, false);
+            spdlog::info("Rimerush drain: warning stage {} (lowest bar {:.0f}% of its maximum; H {:.1f} M {:.1f} S {:.1f}; {:.2f}/s per bar)",
+                stage, lowest * 100.0, after[0], after[1], after[2], rate);
+        }
+
+        if (!Core::DrainDepleted(after[0], after[1], after[2])) return;
+
+        // A bar is empty. The full blackout is the only consequence, and only when both switches allow it.
+        if (!g_depleted) {
+            g_depleted = true;
+            spdlog::info("Rimerush drain: a bar is depleted (H {:.1f} M {:.1f} S {:.1f})", after[0], after[1], after[2]);
+            if (!Blackout::FullBlackoutAllowed()) {
+                spdlog::info("Rimerush withdrawal: bars at the floor, full blackout is off");
+            } else if (!settings.rimerushWithdrawalBlackout) {
+                spdlog::info("Rimerush withdrawal: bars at the floor, bRimerushWithdrawalBlackout is off");
+            } else {
+                const char* route = Ragdoll::KnockNow("rimerush withdrawal");
+                spdlog::info("Rimerush drain: ragdoll first (route {}), blackout in {:.1f} s", route ? route : "none (blackout starts anyway)",
+                    Core::kRagdollFirstSeconds);
+                g_blackoutDue      = Core::BlackoutStartAfterKnock(now);
+                g_blackoutDueFirst = now;
+                g_blackoutGen      = Blackout::Generation();
+            }
+        }
+    }
+
+    // Starts a due withdrawal blackout through the same entry point as the overdose (Blackout::Run applies every guard).
+    static void BlackoutTick(double now)
+    {
+        if (!g_blackoutDue) return;
+        if (Blackout::Generation() != g_blackoutGen) {
+            spdlog::info("Rimerush drain: blackout dropped, a load, new game or death happened meanwhile");
+            ResetDrain("generation changed");
+            return;
+        }
+        if (now < *g_blackoutDue) return;
+        if (Blackout::MenuOrPauseActive()) {  // deferral: wait for the menu to close (give up like the overdose does)
+            if (now - *g_blackoutDue > Core::kOverdoseGiveUpSeconds) {
+                spdlog::warn("Rimerush drain: blackout dropped, a menu was open for {:.0f} s", Core::kOverdoseGiveUpSeconds);
+                g_blackoutDue.reset();
+            }
+            return;
+        }
+        if (!Blackout::FullBlackoutAllowed() || !Config::Get().rimerushWithdrawalBlackout) {
+            spdlog::info("Rimerush withdrawal: blackout cancelled, a switch was turned off meanwhile");
+            g_blackoutDue.reset();
+            return;
+        }
+        spdlog::info("Rimerush drain: starting the blackout (reason: rimerush withdrawal)");
+        Blackout::Run("rimerush withdrawal");
+        if (Blackout::Busy()) {
+            g_blackoutDue.reset();
+            g_awaitRestore = true;
+            g_blackoutSeen = true;
+        } else if (now - g_blackoutDueFirst > kDrainGiveUpSeconds + Core::kRagdollFirstSeconds) {
+            spdlog::warn("Rimerush drain: the blackout could not start for {:.0f} s (a guard refused it), dropped", kDrainGiveUpSeconds);
+            g_blackoutDue.reset();
+        } else {
+            *g_blackoutDue = now + 1.0;  // retried next poll
+        }
+    }
+
     void OnGameLoaded()
     {
+        ResetDrain("game loaded");
+        g_pauseUntil = 0.0;
         g_applied  = -1;
         g_addicted = { -1, -1, -1 };
         g_prev.reset();
@@ -172,6 +381,8 @@ namespace Highrim::Withdrawal
     {
         try {
             const double now = RealSeconds();
+            DrainTick(now);
+            BlackoutTick(now);
             if (now < g_nextPoll) return;
             g_nextPoll = now + kPollSeconds;
 

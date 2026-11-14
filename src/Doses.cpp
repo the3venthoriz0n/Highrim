@@ -472,7 +472,12 @@ namespace Highrim::Doses
             const int       level         = Core::StackLevel(stack);
             const double    strength      = type == Core::DrugType::kDepressant ? Core::StrengthForVelvetStack(stack)
                                                                                  : Core::StrengthForStack(stack);
-            const bool      blackout      = settings.overdose && Core::ShouldBlackout(total, blackoutDoses);
+            bool            blackout      = settings.overdose && Core::ShouldBlackout(total, blackoutDoses);
+            if (blackout && !Blackout::FullBlackoutAllowed()) {
+                // bFullBlackout is off (the default) and there is no milder faint yet: do nothing but log.
+                spdlog::info("Blackout skipped: full blackout is off (overdose: total {}/{})", total, blackoutDoses);
+                blackout = false;
+            }
             std::string     previous      = "none";
             if (previousHours >= 0.0 && std::isfinite(previousHours)) {
                 previous = fmt::format("{:.1f} min ago", (now - previousHours) * 60.0);
@@ -637,7 +642,7 @@ namespace Highrim::Doses
                 g_comedownStop   = false;
                 g_comedownEnd.reset();
             }
-            g_shakyWanted = Core::IsHigh(g_comedowns);
+            g_shakyWanted = Core::IsShakyHigh(g_comedowns);
             ragdollActive = g_comedowns.dueSeconds[static_cast<std::size_t>(Core::DrugType::kDepressant)].has_value();
             ragdollStack  = g_stacks.count[static_cast<std::size_t>(Core::DrugType::kDepressant)];
             while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {

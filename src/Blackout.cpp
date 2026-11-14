@@ -627,7 +627,9 @@ namespace Highrim::Blackout
                     spdlog::info("Blackout: hotkey ignored, a menu is open");
                 } else {
                     spdlog::info("Blackout: hotkey pressed (scan code {})", key);
-                    if (g_hotkeyDue) {
+                    if (!FullBlackoutAllowed()) {
+                        spdlog::info("Blackout skipped: full blackout is off (hotkey)");
+                    } else if (g_hotkeyDue) {
                         spdlog::info("Blackout: hotkey ignored, a blackout is already about to start");
                     } else {
                         const char* route = Ragdoll::KnockNow("hotkey blackout");
@@ -729,10 +731,19 @@ namespace Highrim::Blackout
         }
     }
 
+    bool FullBlackoutAllowed()
+    {
+        return Core::FullBlackoutAllowed(Config::Get().fullBlackout);
+    }
+
     void Run(const char* reason)
     {
         const char* why = reason ? reason : "?";
         spdlog::info("Blackout: Run requested (reason: {})", why);
+        if (!FullBlackoutAllowed()) {
+            spdlog::info("Blackout skipped: full blackout is off (reason: {})", why);
+            return;
+        }
         if (Busy()) {
             spdlog::info("Blackout: ignored, already running");
             return;

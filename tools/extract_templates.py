@@ -30,6 +30,7 @@ TEMPLATES = {
     0x001019DA: "DetectLifeFriendExteriorSelfFF (Detect Life MGEF)",
     0x001019DB: "DetectLifeFriendInteriorSelfFF (Detect Life MGEF)",
     0x00031060: "ParalyzeMassImod (IMAD, cloned with the blur tracks zeroed for Velvet Haze)",
+    0x0010C445: "LowHealthImod (IMAD, cloned with the blur tracks zeroed for the overdose risk warning)",
 }
 
 

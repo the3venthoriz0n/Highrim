@@ -26,8 +26,10 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
         HighrimAbAddicted                           the harmless effect of the Addicted abilities
         HighrimAbShakySpeech / AbShakySneak         Speech / Sneak -999 while high
         HighrimAbSkill<Skill>                       18 withdrawal effects, one per skill (tier penalty -10 / -20 / -30)
+        HighrimAbOverdose<Low|Elevated|High>        the harmless effect (magnitude 0) of the three Overdose Risk abilities (Task 16)
   SPEL  HighrimShaky                                "Shaky and Suspicious": Speech and Sneak 0 while high
         HighrimAddicted<Rimerush|VelvetHaze|Dreamcap>   "Addicted: <drug>" abilities (dependency level 10 or more)
+        HighrimOverdose<Low|Elevated|High>          "Overdose Risk: <tier>" abilities, one at a time while the dose total is inside the window
         HighrimComedownRimerush / VelvetHaze / Dreamcap   60 s fire-and-forget spells the plugin casts at the end of a high
         HighrimWithdrawal1 / 2 / 3                  withdrawal abilities (type Ability), one set for all drug types
         HighrimHangover                             ability the plugin adds after a blackout and removes after a game day
@@ -37,6 +39,8 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
         HighrimAbLostGear                           the (harmless) effect those abilities carry
   IMAD  HighrimImodVelvet                           Velvet Haze screen effect: ParalyzeMassImod with the blur tracks zeroed
         HighrimImodComedown                         black-and-white comedown look: the same record, no blur, no tint, saturation 0, 60 s
+        HighrimImodOverdose                         overdose warning: LowHealthImod (the vanilla low-health look) with every blur track zeroed,
+                                                    a stronger tint and a 4 s run (the plugin re-triggers it)
   BOOK  HighrimNote<Hold>                           nine notes: Whiterun Eastmarch Rift Haafingar Hjaalmarch Reach
                                                     Falkreath Pale Winterhold
   ALCH  HighrimRimerush / HighrimVelvetHaze / HighrimDreamcap
@@ -101,6 +105,12 @@ DETECT_LIFE_TEXT = ("Living creatures and people are visible through walls withi
 GOLD = 0x0000000F             # Gold001
 RECIPE_GOLD = 1000            # every cooking pot recipe costs exactly this much gold and nothing else
 IMAD_COMEDOWN = "HighrimImodComedown"
+# Task 16: the screen warning at the Elevated and High overdose risk tiers. LowHealthImod is the vanilla low-health look
+# (a red tint at the edges of the effect plus blur). Picked by name and by reading its tracks, not from seeing it in game.
+IMOD_OVERDOSE_SOURCE = 0x0010C445
+IMAD_OVERDOSE = "HighrimImodOverdose"
+OVERDOSE_IMOD_SECONDS = 4.0     # the vanilla record runs 1 s; the plugin re-triggers it about every 10 s ("pulsing")
+OVERDOSE_TINT_ALPHA = 0.35      # the vanilla peak tint alpha is 0.098, too faint at strength 0.4: raised (unverified in game)
 COMEDOWN_IMOD_SECONDS = 60.0  # duration written into the comedown IMAD (the plugin also stops it by itself)
 ACTOR_VALUE_CARRY_WEIGHT = 32
 ACTOR_VALUE_HEALTH, ACTOR_VALUE_MAGICKA, ACTOR_VALUE_STAMINA = 24, 25, 26
@@ -154,6 +164,13 @@ def rush_skill_edid(name, kind):
     """HighrimFxRushSkill<Skill> (potion effect) or HighrimAbRushSkill<Skill> (stack ability effect)."""
     return f"Highrim{kind}RushSkill" + "".join(w.capitalize() for w in name.replace("-", " ").split())
 
+
+# Task 16: overdose risk tiers (key, ability name, description). Same text as Core::RiskTierName / RiskTierDescription.
+OVERDOSE_TIERS = [
+    ("Low", "Overdose Risk: Low", "Your body is handling it, for now."),
+    ("Elevated", "Overdose Risk: Elevated", "Your heart is racing. One more dose could knock you out."),
+    ("High", "Overdose Risk: High", "You are on the edge. Another dose may put you on the floor, or worse."),
+]
 
 DRUG_NAMES = {"Rimerush": "Rimerush", "VelvetHaze": "Velvet Haze", "Dreamcap": "Dreamcap"}
 ADDICTED_TEXT = "You depend on {drug}. Without it you will go into withdrawal after about 4 hours."
@@ -234,6 +251,11 @@ MGEFS = [
     (skill_edid(name), f"Withdrawal: {name}", f"{name} is changed by <mag> while you are in withdrawal.",
      T_AB_FORT_STAMINA, {"av": av})
     for name, av in SKILLS
+] + [
+    # Task 16: the three Overdose Risk abilities carry one harmless effect each (carry weight, magnitude 0): an ability needs
+    # an effect to be listed in Active Effects. The effect text is the plain description.
+    (f"HighrimAbOverdose{key}", name, desc, T_AB_FORT_STAMINA, {"av": ACTOR_VALUE_CARRY_WEIGHT})
+    for key, name, desc in OVERDOSE_TIERS
 ]
 
 # Plain-words text for the spell descriptions of effects whose magnitude is negative (<neg> is the absolute value).
@@ -310,7 +332,9 @@ def spell_defs():
         ("HighrimShaky", "Shaky and Suspicious", "ability",
          [effect(fx("HighrimAbShakySpeech"), SHAKY_SKILL_PENALTY, 0), effect(fx("HighrimAbShakySneak"), SHAKY_SKILL_PENALTY, 0)])
     ] + [(f"HighrimAddicted{key}", f"Addicted: {name}", "ability", [effect(fx("HighrimAbAddicted"), 0, 0)])
-         for key, name in DRUG_NAMES.items()]
+         for key, name in DRUG_NAMES.items()] + [
+        (f"HighrimOverdose{key}", name, "ability", [effect(fx(f"HighrimAbOverdose{key}"), 0, 0)])
+        for key, name, _ in OVERDOSE_TIERS]
 
 
 # Spell descriptions that say more than the effect texts do (everything else is built from the effects' texts).
@@ -321,6 +345,7 @@ SPELL_EXTRA = {
 }
 SPELL_TEXT = {"HighrimShaky": "Speech and Sneak are 0 while you are high on Velvet Haze or Dreamcap."}
 SPELL_TEXT.update({f"HighrimAddicted{key}": ADDICTED_TEXT.format(drug=name) for key, name in DRUG_NAMES.items()})
+SPELL_TEXT.update({f"HighrimOverdose{key}": desc for key, _, desc in OVERDOSE_TIERS})
 SPELL_TEXT.update({f"HighrimLostGear{hold}": f"A hazy memory: the guards in {CAPITALS[hold]} may have your things." for hold in HOLDS})
 
 
@@ -355,13 +380,13 @@ KEYWORD_EDID = "HighrimDrug"
 SPELL_EDIDS = ["HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
                "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover",
                "HighrimBlurPulse"] + STACK_EDIDS + [f"HighrimLostGear{hold}" for hold in HOLDS] + [
-    "HighrimShaky"] + [f"HighrimAddicted{key}" for key in DRUG_NAMES]
+    "HighrimShaky"] + [f"HighrimAddicted{key}" for key in DRUG_NAMES] + [f"HighrimOverdose{key}" for key, _, _ in OVERDOSE_TIERS]
 NOTE_EDIDS = ["HighrimNote" + hold for hold in HOLDS]
 ALCH_EDIDS = ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"]
 COBJ_EDIDS = [r[0] for r in RECIPES]
 # Group order and the order form IDs are handed out in.
 ORDER = [("KYWD", [KEYWORD_EDID]), ("MGEF", [m[0] for m in MGEFS]), ("SPEL", SPELL_EDIDS),
-         ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS), ("IMAD", [IMAD_VELVET, IMAD_COMEDOWN])]
+         ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS), ("IMAD", [IMAD_VELVET, IMAD_COMEDOWN, IMAD_OVERDOSE])]
 
 PINNED_FILE = os.environ.get("HIGHRIM_PINNED_IDS") or os.path.join(TOOLS, "pinned_form_ids.json")
 
@@ -619,6 +644,22 @@ def build_imad_comedown(edid):
     return esp.record(b"IMAD", ids[edid], esp.join_subs(subs))
 
 
+def build_imad_overdose(edid):
+    """Overdose warning: LowHealthImod with no blur (every blur track zeroed), the red tint's peak strength raised to
+    OVERDOSE_TINT_ALPHA and a duration of OVERDOSE_IMOD_SECONDS instead of 1 s. Everything else is the vanilla record."""
+    subs = template(format(IMOD_OVERDOSE_SOURCE, "08X"), "IMAD")
+    replace(subs, "EDID", esp.zstr(edid))
+    zero_blur(subs)
+    data = dict(subs)["TNAM"]
+    floats = list(struct.unpack(f"<{len(data) // 4}f", data))
+    peak = max(range(4, len(floats), 5), key=lambda i: floats[i])  # the key with the strongest tint (alpha slot)
+    floats[peak] = OVERDOSE_TINT_ALPHA
+    replace(subs, "TNAM", struct.pack(f"<{len(floats)}f", *floats))
+    dnam = dict(subs)["DNAM"]
+    replace(subs, "DNAM", patch(dnam, 4, "<f", OVERDOSE_IMOD_SECONDS))
+    return esp.record(b"IMAD", ids[edid], esp.join_subs(subs))
+
+
 def build_mcm_quest(mod_name):
     """The MCM Helper registration quest, byte for byte what tools/make_mcm_plugin.py wrote in Task 1."""
     quest_id = MCM_QUEST_ID  # master index 1 (this plugin), light-plugin local id 0xD62
@@ -658,7 +699,7 @@ def build():
         "BOOK": [build_book("HighrimNote" + hold, hold) for hold in HOLDS],
         "ALCH": [build_alch(*drugs[e]) for e in ALCH_EDIDS],
         "COBJ": [build_cobj(*r) for r in RECIPES],
-        "IMAD": [build_imad(IMAD_VELVET), build_imad_comedown(IMAD_COMEDOWN)],
+        "IMAD": [build_imad(IMAD_VELVET), build_imad_comedown(IMAD_COMEDOWN), build_imad_overdose(IMAD_OVERDOSE)],
         "QUST": [build_mcm_quest(MOD_NAME)],
     }
     groups = [esp.group(rtype.encode("ascii"), records[rtype]) for rtype in

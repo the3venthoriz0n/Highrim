@@ -52,18 +52,20 @@ EXPECTED_EDIDS = {
         "HighrimAbCarryUp", "HighrimAbAddicted", "HighrimAbShakySpeech", "HighrimAbShakySneak",
         "HighrimFxRushHealth", "HighrimFxRushMagicka", "HighrimAbHealthUp", "HighrimAbMagickaUp",
     ] + ["HighrimFxRushSkill" + name for name in SKILL_NAMES] + ["HighrimAbRushSkill" + name for name in SKILL_NAMES]
-    + ["HighrimAbSkill" + name for name in SKILL_NAMES],
+    + ["HighrimAbSkill" + name for name in SKILL_NAMES]
+    + ["HighrimAbOverdose" + tier for tier in ("Low", "Elevated", "High")],
     "SPEL": [
         "HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
         "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3",
         "HighrimHangover", "HighrimBlurPulse",
     ] + [f"HighrimStack{drug}{n}" for drug in ("Rimerush", "VelvetHaze", "Dreamcap") for n in (1, 2, 3)]
     + ["HighrimLostGear" + hold for hold in HOLDS]
-    + ["HighrimShaky", "HighrimAddictedRimerush", "HighrimAddictedVelvetHaze", "HighrimAddictedDreamcap"],
+    + ["HighrimShaky", "HighrimAddictedRimerush", "HighrimAddictedVelvetHaze", "HighrimAddictedDreamcap"]
+    + ["HighrimOverdose" + tier for tier in ("Low", "Elevated", "High")],
     "BOOK": ["HighrimNote" + hold for hold in HOLDS],
     "ALCH": ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"],
     "COBJ": ["HighrimRecipeRimerush", "HighrimRecipeVelvetHaze", "HighrimRecipeDreamcap"],
-    "IMAD": ["HighrimImodVelvet", "HighrimImodComedown"],
+    "IMAD": ["HighrimImodVelvet", "HighrimImodComedown", "HighrimImodOverdose"],
     "QUST": ["Highrim_MCM"],
 }
 ALL_EDIDS = {edid for group in EXPECTED_EDIDS.values() for edid in group}
@@ -239,10 +241,10 @@ def vanilla_types(path):
     return out
 
 
-def read_template_imad():
-    """Subrecords of the vanilla ParalyzeMassImod as stored in tools/vanilla_templates.json."""
+def read_template_imad(key="00031060"):
+    """Subrecords of a vanilla IMAD (default ParalyzeMassImod) as stored in tools/vanilla_templates.json."""
     with open(os.path.join(ROOT, "tools", "vanilla_templates.json"), encoding="utf-8") as handle:
-        raw = json.load(handle)["00031060"]
+        raw = json.load(handle)[key]
     assert raw["type"] == "IMAD"
     return {tag: bytes.fromhex(data) for tag, data in raw["subs"]}
 
@@ -461,6 +463,61 @@ class EspTests(unittest.TestCase):
             self.assertTrue(all(v == 0.0 for v in struct.unpack(f"<{len(data) // 4}f", data)[1::2]), "saturation not zero")
             self.assertEqual(len(data), len(vanilla[tag]))
         self.assertAlmostEqual(struct.unpack_from("<f", mine.first("DNAM"), 4)[0], 60.0)
+
+    # --- Task 16: overdose risk -----------------------------------------------------------------
+    def test_overdose_risk_abilities(self):
+        tiers = (("Low", "Overdose Risk: Low", "Your body is handling it, for now."),
+                 ("Elevated", "Overdose Risk: Elevated", "Your heart is racing. One more dose could knock you out."),
+                 ("High", "Overdose Risk: High", "You are on the edge. Another dose may put you on the floor, or worse."))
+        ids = set()
+        for key, name, desc in tiers:
+            spell = self.edid["HighrimOverdose" + key]
+            self.assertEqual(spell.first("FULL"), name.encode("ascii") + bytes(1))
+            self.assertEqual(spell.first("DESC"), desc.encode("ascii") + bytes(1))
+            self.assertEqual(struct.unpack_from("<I", spell.first("SPIT"), 8)[0], 4, "ability, lasts until removed")
+            fx = self.effects_of("HighrimOverdose" + key)
+            self.assertEqual(len(fx), 1)
+            self.assertEqual(fx[0][0], self.edid["HighrimAbOverdose" + key].formid)
+            self.assertEqual(fx[0][1][0], 0.0, "no gameplay effect: magnitude 0")
+            mgef = self.edid["HighrimAbOverdose" + key]
+            self.assertEqual(struct.unpack_from("<I", mgef.first("DATA"), 0)[0] & 0x5, 0, "not hostile or detrimental")
+            self.assertEqual(struct.unpack_from("<I", mgef.first("DATA"), 68)[0], 32, "carry weight, magnitude 0")
+            self.assertEqual(mgef.first("FULL"), name.encode("ascii") + bytes(1))
+            self.assertEqual(mgef.first("DNAM"), desc.encode("ascii") + bytes(1))
+            ids.add(spell.formid)
+        self.assertEqual(len(ids), 3)
+
+    def test_overdose_texts_match_the_plugin_core(self):
+        # Core::RiskTierName / RiskTierDescription in src/Core.cpp are the same strings
+        core = read_text(os.path.join(ROOT, "src", "Core.cpp"))
+        for key in ("Low", "Elevated", "High"):
+            spell = self.edid["HighrimOverdose" + key]
+            for tag in ("FULL", "DESC"):
+                text = spell.first(tag)[:-1].decode("ascii")
+                self.assertIn(f'"{text}"', core, f"{key} {tag} text is not in Core.cpp")
+
+    def test_overdose_imad_has_no_blur_a_visible_tint_and_a_short_run(self):
+        mine = self.edid["HighrimImodOverdose"]
+        vanilla = read_template_imad("0010C445")
+        self.assertEqual(mine.type, "IMAD")
+        blur_tags = ("BNAM", "VNAM", "RNAM", "SNAM", "UNAM", "NAM1", "NAM2", "WNAM", "XNAM", "YNAM", "NAM4")
+        for tag in blur_tags:
+            data = mine.first(tag)
+            floats = struct.unpack(f"<{len(data) // 4}f", data)
+            self.assertTrue(all(v == 0.0 for v in floats[1::2]), f"{tag} still blurs")
+            self.assertEqual(len(data), len(vanilla[tag]), f"{tag} key count must be unchanged")
+        self.assertGreater(max(struct.unpack(f"<{len(vanilla['BNAM']) // 4}f", vanilla["BNAM"])[1::2]), 0, "the source had blur")
+        tint = struct.unpack("<15f", mine.first("TNAM"))
+        source = struct.unpack("<15f", vanilla["TNAM"])
+        self.assertAlmostEqual(max(tint[4::5]), 0.35, places=5)
+        self.assertLess(max(source[4::5]), 0.35, "the vanilla tint is fainter")
+        self.assertEqual(tint[0::5], source[0::5], "tint key times unchanged")
+        self.assertEqual([tint[i] for i in range(15) if i % 5 not in (4,)], [source[i] for i in range(15) if i % 5 not in (4,)],
+                         "tint colours unchanged")
+        self.assertAlmostEqual(struct.unpack_from("<f", mine.first("DNAM"), 4)[0], 4.0)
+        for tag, data in vanilla.items():
+            if tag not in ("EDID", "TNAM", "DNAM") + blur_tags:
+                self.assertEqual(mine.first(tag), data, f"{tag} must match the source")
 
     def test_detrimental_effects_are_not_flagged_hostile_or_detrimental(self):
         # Cure Disease and other dispels: our comedown, withdrawal and hangover effects carry no Hostile (0x1) or

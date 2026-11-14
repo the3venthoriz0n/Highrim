@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,6 +31,9 @@ namespace Highrim::Doses
         Core::DiagnosticTimers g_diagnostics{};
         std::optional<double> g_overdoseDue;  // real seconds: when the knock-down is due (waits while a menu is open)
         std::optional<double> g_blackoutDue;  // real seconds: when the blackout itself starts (set by the knock)
+        // What the pending overdose will be once the knock-down is over (Faint or Full); kNone when nothing is pending.
+        Core::OverdoseOutcome g_pendingOutcome = Core::OverdoseOutcome::kNone;
+        std::mt19937          g_rng{ std::random_device{}() };  // the overdose rolls (used under g_mutex)
         Core::DoseStacks      g_stacks{};
         Core::DoseTotals      g_totals{};     // doses of any drug, for the blackout count
         std::array<int, 3>    g_wantedLevel{};               // stack ability level each drug should carry (0 = none)
@@ -43,6 +47,16 @@ namespace Highrim::Doses
         std::array<bool, 3>   g_visualActive{};              // a screen effect was triggered and not stopped yet
         std::array<bool, 3>   g_visualStop{};                // the game thread must stop it (high ended, load, blackout)
         std::uint32_t         g_epoch = 0;                   // bumped on every reset so stale game-thread work is dropped
+
+        // Overdose risk indicator (Task 16): the tier the player should carry (Core::RiskTier as int) and what the game thread
+        // applied (-1 = unknown, always re-sync); and the Elevated / High screen warning, re-triggered like the drug visuals.
+        int                   g_riskWanted  = 0;
+        int                   g_riskApplied = -1;
+        std::optional<double> g_riskVisualDue;      // real seconds
+        double                g_riskStrength = 0.0;  // strength the warning should run at; 0 = none
+        double                g_riskLogged   = 0.0;  // strength of the last "started" log line, so re-triggers stay quiet
+        bool                  g_riskVisualActive = false;
+        constexpr std::array<std::uint32_t, 3> kRiskIds{ Forms::HighrimOverdoseLow, Forms::HighrimOverdoseElevated, Forms::HighrimOverdoseHigh };
 
         // Comedown screen effect (one black-and-white IMAD shared by the three drugs): runs until g_comedownEnd, then
         // the game thread stops it. A later comedown restarts it with its own strength and a new end.
@@ -418,6 +432,109 @@ namespace Highrim::Doses
             }
         }
 
+        // Game thread. Makes the player carry exactly the Overdose Risk ability of the wanted tier (none for 0), never two.
+        // A tier that rose since the last sync says so on the HUD (after a load nothing was applied and the dose total is
+        // empty, so any tier above none is a rise from none).
+        void SyncRiskAbility()
+        {
+            int           wanted  = 0;
+            int           applied = -1;
+            std::uint32_t epoch   = 0;
+            {
+                std::lock_guard lock(g_mutex);
+                wanted  = g_riskWanted;
+                applied = g_riskApplied;
+                epoch   = g_epoch;
+            }
+            if (wanted == applied) {
+                return;
+            }
+            auto* player  = RE::PlayerCharacter::GetSingleton();
+            auto* ui      = RE::UI::GetSingleton();
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            if (!player || !handler || !player->Is3DLoaded() || !player->GetParentCell() || !ui ||
+                ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+                return;
+            }
+            std::array<RE::SpellItem*, 3> spells{};
+            for (std::size_t i = 0; i < 3; ++i) {
+                spells[i] = handler->LookupForm<RE::SpellItem>(kRiskIds[i], Forms::kPluginName);
+                if (!spells[i]) {
+                    spdlog::error("Overdose risk: ability {} not found in {}", i + 1, Forms::kPluginName);
+                    return;  // retried on the next tick
+                }
+            }
+            for (std::size_t i = 0; i < 3; ++i) {
+                if (static_cast<int>(i) + 1 != wanted && player->HasSpell(spells[i])) {
+                    const bool removed = player->RemoveSpell(spells[i]);
+                    spdlog::info("Overdose risk: removed '{}', RemoveSpell -> {}", Core::RiskTierName(static_cast<Core::RiskTier>(i + 1)), removed);
+                    if (!removed && player->HasSpell(spells[i])) {
+                        return;
+                    }
+                }
+            }
+            if (wanted >= 1 && wanted <= 3) {
+                auto* spell = spells[static_cast<std::size_t>(wanted - 1)];
+                if (!player->HasSpell(spell)) {
+                    const bool added = player->AddSpell(spell);
+                    spdlog::info("Overdose risk: tier {} -> {} ('{}'), AddSpell -> {}", std::max(applied, 0), wanted,
+                        Core::RiskTierName(static_cast<Core::RiskTier>(wanted)), added);
+                    if (!added && !player->HasSpell(spell)) {
+                        return;
+                    }
+                }
+                if (Core::RiskTierRose(static_cast<Core::RiskTier>(std::max(applied, 0)), static_cast<Core::RiskTier>(wanted))) {
+                    RE::SendHUDMessage::ShowHUDMessage(Core::RiskRiseMessage(static_cast<Core::RiskTier>(wanted)).c_str(), nullptr, false);
+                }
+            }
+            std::lock_guard lock(g_mutex);
+            if (epoch == g_epoch) {
+                g_riskApplied = wanted;
+            }
+        }
+
+        RE::TESImageSpaceModifier* LookupRiskImod()
+        {
+            auto* handler = RE::TESDataHandler::GetSingleton();
+            return handler ? handler->LookupForm<RE::TESImageSpaceModifier>(Forms::HighrimImodOverdose, Forms::kPluginName) : nullptr;
+        }
+
+        void TriggerRiskVisual(double strength)
+        {
+            auto* imod = LookupRiskImod();
+            if (!imod) {
+                spdlog::error("Overdose visual: image space modifier {:06X} not found in {}", Forms::HighrimImodOverdose, Forms::kPluginName);
+                return;
+            }
+            RE::ImageSpaceModifierInstanceForm::Trigger(imod, static_cast<float>(strength), nullptr);
+            bool fresh = false;
+            {
+                std::lock_guard lock(g_mutex);
+                g_riskVisualActive = true;
+                fresh              = g_riskLogged != strength;
+                g_riskLogged       = strength;
+            }
+            if (fresh) {
+                spdlog::info("Overdose visual: started ({:08X}) at strength {:.2f}, re-triggered about every {:.0f} s", imod->GetFormID(),
+                    strength, kVisualPeriodSeconds);
+            } else {
+                spdlog::debug("Overdose visual: re-triggered at strength {:.2f}", strength);
+            }
+        }
+
+        void StopRiskVisual()
+        {
+            auto* imod = LookupRiskImod();
+            if (imod) {
+                RE::ImageSpaceModifierInstanceForm::Stop(imod);
+            }
+            {
+                std::lock_guard lock(g_mutex);
+                g_riskLogged = 0.0;
+            }
+            spdlog::info("Overdose visual: stopped{}", imod ? "" : " - image space modifier not found");
+        }
+
         void StartComedownVisual(Core::DrugType type, int stack)
         {
             auto* handler = RE::TESDataHandler::GetSingleton();
@@ -472,22 +589,41 @@ namespace Highrim::Doses
             const int       level         = Core::StackLevel(stack);
             const double    strength      = type == Core::DrugType::kDepressant ? Core::StrengthForVelvetStack(stack)
                                                                                  : Core::StrengthForStack(stack);
-            bool            blackout      = settings.overdose && Core::ShouldBlackout(total, blackoutDoses);
-            if (blackout && !Blackout::FullBlackoutAllowed()) {
-                // bFullBlackout is off (the default) and there is no milder faint yet: do nothing but log.
-                spdlog::info("Blackout skipped: full blackout is off (overdose: total {}/{})", total, blackoutDoses);
-                blackout = false;
+            const auto      tier          = Core::OverdoseRiskTier(total, blackoutDoses);
+            const double    chance        = Core::FullBlackoutChance(total, blackoutDoses);
+            auto            outcome       = Core::OverdoseOutcome::kNone;
+            if (settings.overdose && Core::ShouldBlackout(total, blackoutDoses)) {
+                // Every counted dose from the threshold up rolls: full blackout with `chance`, else a faint half the time.
+                std::uniform_real_distribution<double> unit(0.0, 1.0);
+                const double                           rollA = unit(g_rng);
+                const double                           rollB = unit(g_rng);
+                outcome                                      = Core::RollOverdose(total, blackoutDoses, rollA, rollB);
+                spdlog::info("Overdose roll: total {}/{} chance {:.0f}% -> {} (rolls {:.3f} / {:.3f}; risk tier {})", total, blackoutDoses,
+                    chance * 100.0, outcome == Core::OverdoseOutcome::kFull ? "full" : outcome == Core::OverdoseOutcome::kFaint ? "faint" : "none",
+                    rollA, rollB, Core::RiskTierName(tier));
+                if (outcome == Core::OverdoseOutcome::kFull && !Blackout::FullBlackoutAllowed()) {
+                    // bFullBlackout is off (the default): the gear-loss blackout never runs, the milder faint does.
+                    spdlog::info("Overdose roll: full -> faint (full blackout is off)");
+                    outcome = Core::OverdoseOutcome::kFaint;
+                }
+            } else if (settings.overdose) {
+                spdlog::info("Overdose roll: total {}/{} chance {:.0f}% -> none (below the threshold; risk tier {})", total, blackoutDoses,
+                    chance * 100.0, Core::RiskTierName(tier));
             }
+            const bool      overdose      = outcome != Core::OverdoseOutcome::kNone;
             std::string     previous      = "none";
             if (previousHours >= 0.0 && std::isfinite(previousHours)) {
                 previous = fmt::format("{:.1f} min ago", (now - previousHours) * 60.0);
             }
-            const char* verdict = blackout ? "blackout" : !settings.overdose ? "no blackout: bOverdose is off"
-                                                                              : "no blackout: total below the dose count";
+            const char* verdict = outcome == Core::OverdoseOutcome::kFull    ? "full blackout"
+                                  : outcome == Core::OverdoseOutcome::kFaint ? "faint"
+                                  : !settings.overdose                       ? "no overdose: bOverdose is off"
+                                  : Core::ShouldBlackout(total, blackoutDoses) ? "no overdose: the roll came up empty"
+                                                                              : "no overdose: total below the dose count";
             spdlog::info("Dose: {} stack {}/{}, total {}/{}, window {} min, previous dose {} -> {} (level {} strength {:.2f})",
                 DrugName(type), stack, blackoutDoses, total, blackoutDoses, windowMin, previous, verdict, level, strength);
-            spdlog::info("Dose: {} addiction {:.1f}/{:.1f}/{:.1f} blackout={} (game hour {:.2f}, addiction {}, overdose setting {})",
-                DrugName(type), r.after.level[0], r.after.level[1], r.after.level[2], blackout, now,
+            spdlog::info("Dose: {} addiction {:.1f}/{:.1f}/{:.1f} overdose={} (game hour {:.2f}, addiction {}, overdose setting {})",
+                DrugName(type), r.after.level[0], r.after.level[1], r.after.level[2], overdose, now,
                 settings.addiction ? "on" : "off", settings.overdose ? "on" : "off");
 
             Core::OnComedownDose(g_comedowns, type, RealSeconds());
@@ -495,14 +631,18 @@ namespace Highrim::Doses
                 Ragdoll::OnDepressantDose();
             }
             Core::ScheduleDiagnostics(g_diagnostics, type, RealSeconds());
-            if (type == Core::DrugType::kHallucinogen && !blackout) {
+            if (type == Core::DrugType::kHallucinogen && !overdose) {
                 g_detectNext = RealSeconds();  // cast on the next tick, then every kDetectLifeRecastSeconds while the high lasts
             }
-            if (blackout || g_overdoseDue || g_blackoutDue) {
-                // A blackout is coming: no stack ability from here on (and the current one goes).
+            if (overdose || g_overdoseDue || g_blackoutDue) {
+                // A faint or blackout is coming: no stack ability from here on (and the current one goes).
                 g_wantedLevel[i] = 0;
-                if (blackout && !g_overdoseDue && !g_blackoutDue) {
-                    g_overdoseDue = RealSeconds();  // knock down now (waits for menus), blackout kRagdollFirstSeconds later
+                if (overdose && !g_overdoseDue && !g_blackoutDue) {
+                    g_overdoseDue    = RealSeconds();  // knock down now (waits for menus), faint or blackout kRagdollFirstSeconds later
+                    g_pendingOutcome = outcome;
+                } else if (outcome == Core::OverdoseOutcome::kFull && g_pendingOutcome == Core::OverdoseOutcome::kFaint) {
+                    g_pendingOutcome = outcome;  // one already pending and not started yet: a full roll upgrades a pending faint
+                    spdlog::info("Overdose roll: the pending faint becomes a full blackout");
                 }
             } else {
                 g_wantedLevel[i] = level;
@@ -554,6 +694,10 @@ namespace Highrim::Doses
     {
         bool                        runOverdose = false;
         bool                        runKnock    = false;
+        Core::OverdoseOutcome       knockOutcome = Core::OverdoseOutcome::kNone;
+        Core::OverdoseOutcome       runOutcome   = Core::OverdoseOutcome::kNone;
+        bool                        stopRiskVisual = false;
+        double                      riskVisual     = 0.0;
         bool                        blackoutPending = false;
         std::vector<std::pair<Core::DrugType, int>> due;  // (drug, its stack when the high ended)
         std::vector<Core::DrugType> stops;
@@ -564,6 +708,8 @@ namespace Highrim::Doses
         const bool                  busy      = Blackout::Busy();
         bool                        ragdollActive = false;
         int                         ragdollStack  = 1;
+        const auto                  settings      = Config::Get();
+        const double                nowHours      = NowHours();
         {
             std::lock_guard lock(g_mutex);
             const double    now = RealSeconds();
@@ -573,10 +719,12 @@ namespace Highrim::Doses
                 case Core::OverdoseAction::kRun:
                     g_overdoseDue.reset();
                     runKnock      = true;
+                    knockOutcome  = g_pendingOutcome;
                     g_blackoutDue = Core::BlackoutStartAfterKnock(now);
                     break;
                 case Core::OverdoseAction::kDrop:
                     g_overdoseDue.reset();
+                    g_pendingOutcome = Core::OverdoseOutcome::kNone;
                     spdlog::warn("Dose: overdose dropped before the knock-down: a menu was open or the game was paused for {:.0f} s",
                         Core::kOverdoseGiveUpSeconds);
                     break;
@@ -588,10 +736,13 @@ namespace Highrim::Doses
                 switch (Core::DecideOverdose(now, *g_blackoutDue, uiBlocked)) {
                 case Core::OverdoseAction::kRun:
                     g_blackoutDue.reset();
-                    runOverdose = true;
+                    runOverdose      = true;
+                    runOutcome       = g_pendingOutcome;
+                    g_pendingOutcome = Core::OverdoseOutcome::kNone;
                     break;
                 case Core::OverdoseAction::kDrop:
                     g_blackoutDue.reset();
+                    g_pendingOutcome = Core::OverdoseOutcome::kNone;
                     spdlog::warn("Dose: overdose dropped before the blackout: a menu was open or the game was paused for {:.0f} s",
                         Core::kOverdoseGiveUpSeconds);
                     break;
@@ -643,6 +794,35 @@ namespace Highrim::Doses
                 g_comedownEnd.reset();
             }
             g_shakyWanted = Core::IsShakyHigh(g_comedowns);
+            {
+                // Overdose risk indicator: the tier of the dose total while it is still inside the window.
+                auto tier = Core::RiskTier::kNone;
+                if (settings.enabled && settings.overdose && nowHours >= 0.0) {
+                    tier = Core::OverdoseRiskTier(
+                        Core::ActiveDoseTotal(g_totals, nowHours, static_cast<int>(settings.doseWindowMinutes)), static_cast<int>(settings.blackoutDoses));
+                }
+                g_riskWanted        = static_cast<int>(tier);
+                const double strength = Core::RiskVisualStrength(tier);
+                if (strength > 0.0) {
+                    if (strength != g_riskStrength) {
+                        g_riskStrength  = strength;  // a new tier: trigger the warning at its strength right away
+                        g_riskVisualDue = now;
+                    } else if (!g_riskVisualDue) {
+                        g_riskVisualDue = now;
+                    }
+                    if (g_riskVisualDue && now >= *g_riskVisualDue && !busy && !blackoutPending && !runKnock) {
+                        riskVisual      = strength;
+                        g_riskVisualDue = now + kVisualPeriodSeconds;
+                    }
+                } else {
+                    g_riskStrength = 0.0;
+                    g_riskVisualDue.reset();
+                    if (g_riskVisualActive) {
+                        g_riskVisualActive = false;
+                        stopRiskVisual     = true;
+                    }
+                }
+            }
             ragdollActive = g_comedowns.dueSeconds[static_cast<std::size_t>(Core::DrugType::kDepressant)].has_value();
             ragdollStack  = g_stacks.count[static_cast<std::size_t>(Core::DrugType::kDepressant)];
             while (auto e = Core::TakeDueDiagnostic(g_diagnostics, now)) {
@@ -654,6 +834,9 @@ namespace Highrim::Doses
         }
         if (stopComedown) {
             StopComedownVisual("the comedown ended or the game state was reset");
+        }
+        if (stopRiskVisual) {
+            StopRiskVisual();
         }
         for (const auto& [d, stack] : due) {
             CastComedown(d);
@@ -668,22 +851,36 @@ namespace Highrim::Doses
             LogDetectLifeCheck();
         }
         if (runKnock) {
-            const char* route = Ragdoll::KnockNow("overdose");
-            spdlog::info("Blackout: ragdoll first (route {}), starting in {:.1f} s", route ? route : "none (blackout starts anyway)",
-                Core::kRagdollFirstSeconds);
+            const bool  faint = knockOutcome == Core::OverdoseOutcome::kFaint;
+            const char* route = Ragdoll::KnockNow(faint ? "overdose faint" : "overdose");
+            spdlog::info("{}: ragdoll first (route {}), starting in {:.1f} s", faint ? "Faint" : "Blackout",
+                route ? route : "none (it starts anyway)", Core::kRagdollFirstSeconds);
         }
         for (const auto& [type, strength] : visuals) {
             TriggerVisual(type, strength);
         }
+        if (riskVisual > 0.0) {
+            TriggerRiskVisual(riskVisual);
+        }
         SyncStackAbilities();
         SyncShaky();
+        SyncRiskAbility();
         Ragdoll::Tick(ragdollActive && !runOverdose && !blackoutPending && !runKnock, ragdollStack);
         for (const auto& e : diagnostics) {
             LogActiveEffects(e.type, e.pass);
         }
         if (runOverdose) {
-            spdlog::info("Dose: overdose, starting the blackout");
-            Blackout::Run("overdose");
+            if (runOutcome == Core::OverdoseOutcome::kFull && !Blackout::FullBlackoutAllowed()) {
+                spdlog::info("Overdose roll: full -> faint (full blackout is off)");  // the setting changed while the knock-down ran
+                runOutcome = Core::OverdoseOutcome::kFaint;
+            }
+            if (runOutcome == Core::OverdoseOutcome::kFull) {
+                spdlog::info("Dose: overdose, starting the blackout");
+                Blackout::Run("overdose");
+            } else {
+                spdlog::info("Dose: overdose, starting the faint");
+                Blackout::RunFaint("overdose");
+            }
         }
     }
 
@@ -694,12 +891,19 @@ namespace Highrim::Doses
         g_diagnostics.pending.clear();
         g_overdoseDue.reset();
         g_blackoutDue.reset();
+        g_pendingOutcome = Core::OverdoseOutcome::kNone;
         // Load, new game, revert or blackout start: forget the stacks and have the game thread strip every stack
         // ability (unknown applied state forces a full sync).
         Core::ResetStacks(g_stacks);
         g_totals = Core::DoseTotals{};
         g_wantedLevel  = {};
         g_appliedLevel = { -1, -1, -1 };
+        // The overdose risk indicator goes with the total: the game thread strips the ability (unknown applied state) and
+        // stops a running warning (Tick sees tier none).
+        g_riskWanted    = 0;
+        g_riskApplied   = -1;
+        g_riskStrength  = 0.0;
+        g_riskVisualDue.reset();
         g_shakyWanted  = false;
         g_shakyApplied = -1;  // unknown: the game thread strips the ability on its next tick
         g_visualDue    = {};

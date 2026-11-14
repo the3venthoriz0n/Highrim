@@ -9,13 +9,20 @@ namespace Highrim::Blackout
 
     // The third gate (bFullBlackout, default OFF): may the FULL blackout sequence run (items to the prison chest, teleport,
     // note, Lost Gear, 6 h skip)? Every trigger asks this; when false the caller logs
-    // "Blackout skipped: full blackout is off" (there is no milder faint yet; Task 16 adds one). Independent of bOverdose
-    // (master switch of the overdose system) and bRimerushWithdrawalBlackout (the depletion trigger).
+    // "Blackout skipped: full blackout is off". The overdose roll then turns a rolled Full into a Faint (Task 16), which
+    // does not need this gate. Independent of bOverdose (master switch of the overdose system) and
+    // bRimerushWithdrawalBlackout (the depletion trigger).
     [[nodiscard]] bool FullBlackoutAllowed();
 
     // Starts the blackout sequence (see Blackout.cpp). Game thread only. Ignored when busy, disabled, dead,
     // in combat, in a menu or when the player is not controllable.
     void Run(const char* reason);
+
+    // Starts the faint (Task 16, the milder overdose outcome): fade to black for about 6 real seconds with the controls off,
+    // one game hour passes, a hangover of four game hours starts (a longer one is kept); nothing moves, no teleport, no note.
+    // Same guards, busy flag and generation check as Run; needs neither bFullBlackout nor bRimerushWithdrawalBlackout.
+    // Game thread only. The caller knocks the player down first.
+    void RunFaint(const char* reason);
 
     // True while the game is paused or any menu (inventory, container, favorites, magic, map, journal, barter,
     // dialogue, console, loading, message box, ...) is open.

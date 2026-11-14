@@ -50,9 +50,9 @@
 		},
 		{
 			"id": "iBlackoutDoses:General",
-			"text": "Doses to blackout",
+			"text": "Overdose roll starts at",
 			"type": "slider",
-			"help": "Doses of any drug in the window.",
+			"help": "Doses of any drug before overdose rolls.",
 			"valueOptions": {
 				"min": 2,
 				"max": 8,

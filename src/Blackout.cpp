@@ -37,10 +37,12 @@ namespace Highrim::Blackout
         // which run on the game thread too).
         double g_hangoverExpiry = 0.0;
 
-        enum class Phase { kIdle, kFadingOut, kSettling, kBlack };
+        // kFaintFading and kFaintBlack are the milder faint (Task 16): fade out, hold black, fade back in; nothing moves.
+        enum class Phase { kIdle, kFadingOut, kSettling, kBlack, kFaintFading, kFaintBlack };
         std::atomic<Phase>                    g_phase{ Phase::kIdle };
         std::chrono::steady_clock::time_point g_deadline;
         std::string                           g_reason;
+        bool                                  g_faintRun = false;  // the running sequence is a faint, not the full blackout
 
         // Bumped on load, new game, revert and player death. A blackout remembers the value it started with.
         std::atomic<std::uint32_t> g_generation{ 0 };
@@ -240,20 +242,28 @@ namespace Highrim::Blackout
             if (success) {
                 auto* p = RE::PlayerCharacter::GetSingleton();
                 if (p && !p->IsDead()) {
-                    RE::SendHUDMessage::ShowHUDMessage(g_wakeMessage.empty() ? "You wake up with a splitting headache." : g_wakeMessage.c_str());
-                    RE::SendHUDMessage::ShowHUDMessage(
-                        "Hangover: stamina is 30 points lower and regenerates 25% slower, and your vision blurs now and then, for one game day.",
-                        nullptr, false);
+                    if (g_faintRun) {
+                        RE::SendHUDMessage::ShowHUDMessage(Core::FaintEndMessage());
+                        RE::SendHUDMessage::ShowHUDMessage(
+                            "Hangover: stamina is 30 points lower and regenerates 25% slower, and your vision blurs now and then, for four game hours.",
+                            nullptr, false);
+                    } else {
+                        RE::SendHUDMessage::ShowHUDMessage(g_wakeMessage.empty() ? "You wake up with a splitting headache." : g_wakeMessage.c_str());
+                        RE::SendHUDMessage::ShowHUDMessage(
+                            "Hangover: stamina is 30 points lower and regenerates 25% slower, and your vision blurs now and then, for one game day.",
+                            nullptr, false);
+                    }
                 }
             }
             if (success) {
-                spdlog::info("Blackout: finished (success)");
+                spdlog::info("{}: finished (success)", g_faintRun ? "Faint" : "Blackout");
             } else if (missing > 0) {
                 spdlog::error("Blackout: finished (aborted; {} item stack(s) could NOT be returned from the chest)", missing);
             } else {
                 spdlog::info("Blackout: finished (aborted, items untouched or all returned)");
             }
-            g_phase = Phase::kIdle;
+            g_faintRun = false;
+            g_phase    = Phase::kIdle;
         }
 
         // missing: stacks a rollback could not return (0 when nothing was moved or everything came back).
@@ -269,6 +279,24 @@ namespace Highrim::Blackout
                 }
             }
             Finish(false, missing);
+        }
+
+        // Moves the game clock on by whole or part hours (the hour of day wraps, the day counter grows).
+        void AdvanceGameHours(float hours, const char* label)
+        {
+            if (auto* calendar = RE::Calendar::GetSingleton(); calendar && calendar->gameHour && calendar->gameDaysPassed) {
+                const float hourBefore = calendar->gameHour->value;
+                float       hour       = hourBefore + hours;
+                while (hour >= 24.0f) {
+                    hour -= 24.0f;
+                }
+                calendar->gameHour->value = hour;
+                calendar->gameDaysPassed->value += hours / 24.0f;
+                spdlog::info("{}: game time advanced {:g} h (hour {:.2f} -> {:.2f}, days passed {:.3f})", label, hours, hourBefore, hour,
+                    calendar->gameDaysPassed->value);
+            } else {
+                spdlog::error("{}: no Calendar, game time not advanced", label);
+            }
         }
 
         // Step 6b, once the player is known to be at the wake spot: note, game time, hangover, Lost Gear reminder.
@@ -288,19 +316,7 @@ namespace Highrim::Blackout
                     g_settle.noteLocalId);
             }
 
-            if (auto* calendar = RE::Calendar::GetSingleton(); calendar && calendar->gameHour && calendar->gameDaysPassed) {
-                const float hourBefore = calendar->gameHour->value;
-                float       hour       = hourBefore + 6.0f;
-                if (hour >= 24.0f) {
-                    hour -= 24.0f;
-                }
-                calendar->gameHour->value = hour;
-                calendar->gameDaysPassed->value += 0.25f;
-                spdlog::info("Blackout: step 6: game time advanced 6 h (hour {:.2f} -> {:.2f}, days passed {:.3f})", hourBefore, hour,
-                    calendar->gameDaysPassed->value);
-            } else {
-                spdlog::error("Blackout: step 6: no Calendar, game time not advanced");
-            }
+            AdvanceGameHours(6.0f, "Blackout: step 6");
 
             if (auto* spell = HangoverSpell()) {
                 if (player->HasSpell(spell)) {
@@ -567,9 +583,62 @@ namespace Highrim::Blackout
             }
         }
 
+        // The faint, once the screen is black (game thread): one game hour passes and a short hangover starts. Nothing is
+        // moved, no teleport, no note. Same guards as the blackout's first step.
+        void DoFaintWork()
+        {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (const auto why = GuardFailure(player, g_runGeneration); !why.empty()) {
+                Abort("faint cancelled, nothing changed: " + why, false);
+                return;
+            }
+            TriggerImod(kFadeToBlackHold, "FadeToBlackHold");
+            AdvanceGameHours(static_cast<float>(Core::kFaintGameHours), "Faint");
+            if (auto* spell = HangoverSpell()) {
+                if (player->HasSpell(spell)) {
+                    spdlog::info("Faint: hangover already active, not added again");
+                } else {
+                    const bool ok = player->AddSpell(spell);
+                    spdlog::info("Faint: hangover ability added -> {}", ok);
+                }
+                Diag::Schedule(Forms::HighrimHangover, "hangover");
+                const double now = NowHours();
+                if (now >= 0.0) {
+                    const double before = g_hangoverExpiry;
+                    g_hangoverExpiry    = Core::FaintHangoverExpiry(g_hangoverExpiry, now);
+                    spdlog::info("Faint: hangover expires at game hour {:.2f} ({})", g_hangoverExpiry,
+                        g_hangoverExpiry > before ? "short hangover set" : "a longer hangover was kept");
+                }
+            } else {
+                spdlog::error("Faint: hangover spell not found in {}", Forms::kPluginName);
+            }
+            g_phase    = Phase::kFaintBlack;
+            g_deadline = std::chrono::steady_clock::now() +
+                         (std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(Core::kFaintTotalSeconds)) -
+                             std::chrono::duration_cast<std::chrono::steady_clock::duration>(kFadeOutTime));
+            spdlog::info("Faint: holding black for the rest of {:.0f} s", Core::kFaintTotalSeconds);
+        }
+
         void Tick()
         {
             const auto now = std::chrono::steady_clock::now();
+            if (g_phase == Phase::kFaintFading && g_runGeneration != g_generation.load()) {
+                Abort("the game state changed during the fade (death, load or revert); nothing was touched", false);
+                return;
+            }
+            if (g_phase == Phase::kFaintFading && now >= g_deadline) {
+                try {
+                    DoFaintWork();
+                } catch (...) {
+                    spdlog::error("Faint: exception");
+                    Abort("unexpected error", false);
+                }
+                return;
+            }
+            if (g_phase == Phase::kFaintBlack && now >= g_deadline) {
+                Finish(true);
+                return;
+            }
             if (g_phase == Phase::kFadingOut && g_runGeneration != g_generation.load()) {
                 Abort("the game state changed during the fade (death, load or revert); nothing was touched", false);
                 return;
@@ -721,6 +790,7 @@ namespace Highrim::Blackout
         BumpGeneration("game loaded or new game");
         g_wasDead = false;
         g_phase   = Phase::kIdle;
+        g_faintRun = false;
         g_settle  = SettleContext{};
         g_wakeMessage.clear();
         if (g_needCleanup.exchange(false)) {
@@ -736,6 +806,70 @@ namespace Highrim::Blackout
         return Core::FullBlackoutAllowed(Config::Get().fullBlackout);
     }
 
+    namespace
+    {
+        // The guards both the blackout and the faint share: not busy (a faint and a blackout never run at once), enabled,
+        // alive, loaded in, not in combat, controllable, not in dialogue, no menu. Logs the reason when it refuses.
+        bool StartAllowed(const char* what)
+        {
+            if (Busy()) {
+                spdlog::info("{}: ignored, already running", what);
+                return false;
+            }
+            const auto settings = Config::Get();
+            if (!settings.enabled) {
+                spdlog::info("{}: ignored, Highrim is disabled", what);
+                return false;
+            }
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!player || !player->GetParentCell()) {
+                spdlog::info("{}: ignored, no player or cell", what);
+                return false;
+            }
+            if (player->IsDead()) {
+                spdlog::info("{}: ignored, the player is dead", what);
+                return false;
+            }
+            if (player->IsInCombat()) {
+                spdlog::info("{}: ignored, the player is in combat", what);
+                return false;
+            }
+            auto* map = RE::ControlMap::GetSingleton();
+            if (!map || !map->AreControlsEnabled(RE::UserEvents::USER_EVENT_FLAG::kMovement)) {
+                spdlog::info("{}: ignored, the player is not controllable", what);
+                return false;
+            }
+            if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) {
+                spdlog::info("{}: ignored, in dialogue", what);
+                return false;
+            }
+            if (MenuOpen()) {
+                spdlog::info("{}: ignored, the game is paused or a menu is open", what);
+                return false;
+            }
+            return true;
+        }
+    }
+
+    void RunFaint(const char* reason)
+    {
+        const char* why = reason ? reason : "?";
+        spdlog::info("Faint: Run requested (reason: {})", why);
+        if (!StartAllowed("Faint")) {
+            return;
+        }
+        spdlog::info("Faint: step 1: knocked down, now fading to black ({:.0f} s in all), controls off", Core::kFaintTotalSeconds);
+        Doses::CancelComedowns();  // a pending comedown cast must not fire in the middle of the faint
+        g_runGeneration = g_generation.load();
+        g_reason        = why;
+        g_faintRun      = true;
+        RE::SendHUDMessage::ShowHUDMessage(Core::FaintStartMessage(), nullptr, false);
+        TriggerImod(kFadeToBlack, "FadeToBlack");
+        SetControls(false);
+        g_phase    = Phase::kFaintFading;
+        g_deadline = std::chrono::steady_clock::now() + kFadeOutTime;
+    }
+
     void Run(const char* reason)
     {
         const char* why = reason ? reason : "?";
@@ -744,39 +878,7 @@ namespace Highrim::Blackout
             spdlog::info("Blackout skipped: full blackout is off (reason: {})", why);
             return;
         }
-        if (Busy()) {
-            spdlog::info("Blackout: ignored, already running");
-            return;
-        }
-        const auto settings = Config::Get();
-        if (!settings.enabled) {
-            spdlog::info("Blackout: ignored, Highrim is disabled");
-            return;
-        }
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        if (!player || !player->GetParentCell()) {
-            spdlog::info("Blackout: ignored, no player or cell");
-            return;
-        }
-        if (player->IsDead()) {
-            spdlog::info("Blackout: ignored, the player is dead");
-            return;
-        }
-        if (player->IsInCombat()) {
-            spdlog::info("Blackout: ignored, the player is in combat");
-            return;
-        }
-        auto* map = RE::ControlMap::GetSingleton();
-        if (!map || !map->AreControlsEnabled(RE::UserEvents::USER_EVENT_FLAG::kMovement)) {
-            spdlog::info("Blackout: ignored, the player is not controllable");
-            return;
-        }
-        if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) {
-            spdlog::info("Blackout: ignored, in dialogue");
-            return;
-        }
-        if (MenuOpen()) {
-            spdlog::info("Blackout: ignored, the game is paused or a menu is open");
+        if (!StartAllowed("Blackout")) {
             return;
         }
 
@@ -784,6 +886,7 @@ namespace Highrim::Blackout
         Doses::CancelComedowns();  // a pending comedown cast must not fire in the middle of the blackout
         g_runGeneration = g_generation.load();
         g_reason = why;
+        g_faintRun = false;
         TriggerImod(kFadeToBlack, "FadeToBlack");
         SetControls(false);
         g_phase    = Phase::kFadingOut;

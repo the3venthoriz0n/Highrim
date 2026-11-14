@@ -49,6 +49,34 @@ class SourceTests(unittest.TestCase):
         self.assertIn("Core::NoteText(Core::CapitalName(", blackout)
         self.assertIn("Core::LostGearMessage(Core::CapitalName(", blackout)
 
+    def test_risk_ability_ids_are_in_forms_h(self):
+        table = forms()
+        doses = read("Doses.cpp")
+        for tier in ("Low", "Elevated", "High"):
+            self.assertIn(f"Forms::HighrimOverdose{tier}", doses)
+            self.assertIn(f"HighrimOverdose{tier}", table)
+            self.assertIn(f"HighrimAbOverdose{tier}", table)
+        self.assertIn("HighrimImodOverdose", table)
+        self.assertIn("Forms::HighrimImodOverdose", doses)
+
+    def test_the_faint_moves_nothing(self):
+        # The faint is the mild outcome: no items to a chest, no teleport, no note, no Lost Gear reminder, no 6 h skip.
+        text = read("Blackout.cpp")
+        body = text[text.index("void DoFaintWork()"):]
+        body = body[:body.index("        void Tick()")]
+        for forbidden in ("RemoveItem", "MoveTo", "AddObjectToContainer", "LostGear::", "Prison::", "Rollback", "6.0f"):
+            self.assertNotIn(forbidden, body, f"the faint must not use {forbidden}")
+        self.assertIn("Core::kFaintGameHours", body)
+        self.assertIn("Core::FaintHangoverExpiry", body)
+
+    def test_a_rolled_full_blackout_becomes_a_faint_when_the_full_blackout_is_off(self):
+        doses = read("Doses.cpp")
+        self.assertIn("Overdose roll: full -> faint (full blackout is off)", doses)
+        self.assertIn("Blackout::RunFaint", doses)
+        # the only way to the full blackout from a dose goes through the allowed check
+        self.assertIn("FullBlackoutAllowed()", doses)
+        self.assertIn("if (!FullBlackoutAllowed())", read("Blackout.cpp"))
+
     def test_no_lookup_through_a_base_class_without_a_form_type(self):
         # TESDataHandler::LookupForm<T> checks form->Is(T::FORMTYPE). TESBoundObject (and MagicItem) have no form type
         # of their own, so the lookup always returned null: this is why no note was ever given.

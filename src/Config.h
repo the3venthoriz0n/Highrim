@@ -12,10 +12,10 @@ namespace Highrim::Config
     struct Settings
     {
         bool          enabled{ true };
-        bool          overdose{ true };   // enough doses of any drug inside the window cause a blackout
+        bool          overdose{ true };   // master switch: doses of any drug inside the window roll for a faint or blackout; the risk indicator
         bool          addiction{ true };  // doses build dependency and withdrawal
         std::uint32_t doseWindowMinutes{ 120 };  // game minutes (5 to 240) that count as back to back
-        std::uint32_t blackoutDoses{ 4 };       // 2 to 8: doses of any drug inside the window that black you out
+        std::uint32_t blackoutDoses{ 4 };       // 2 to 8: doses of any drug inside the window before every dose rolls (iBlackoutDoses)
         bool          rimerushWithdrawalBlackout{ true };  // Rimerush withdrawal drained to 0 triggers the blackout path
         bool          fullBlackout{ false };  // the full blackout sequence (lose gear, new place) is allowed; OFF by default
         bool          ragdoll{ true };    // Velvet Haze knocks the player over at random

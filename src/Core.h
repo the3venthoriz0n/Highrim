@@ -119,6 +119,41 @@ namespace Highrim::Core
     const char* RimerushDrainStartMessage();
     const char* RimerushDrainStopMessage();
 
+    // Rimerush withdrawal drain, Task 18: instead of lowering the current values, the plugin can lower the MAXIMUMS (a Ravage /
+    // Survival Mode style peak value modifier on Health, Magicka and Stamina), which is what the HUD shows as the red part of a
+    // bar (unverified in game). kDrainUsesRavage picks the path: true = the ravage spell, false = the direct drain above.
+    inline constexpr bool   kDrainUsesRavage   = true;
+    inline constexpr double kRavageRecastStep  = 2.0;   // the ravage spell is cast again when the amount moved by this much
+    // New ravage amount (points taken off the maximum) after dtSeconds at perSecond: the old amount plus the gain, never above
+    // baseMax - floor (a floor of 0 lets the maximum reach 0). baseMax is the maximum without the ravage; a maximum that is not
+    // finite or not above the floor gives 0. A bad or non-positive rate or time adds nothing; a bad or negative old amount counts as 0.
+    double RavageAmountAfter(double currentAmount, double perSecond, double dtSeconds, double baseMax, double floor);
+    // True when the applied ravage (negative = unknown) has to be cast again for the wanted amount: unknown applied state,
+    // a release (wanted 0 while something is applied), a bad wanted amount, or a change of at least `step` (any change when
+    // the step is not positive).
+    bool RavageRecastNeeded(double appliedAmount, double wantedAmount, double step);
+
+    // Timed addiction and withdrawal, Task 18. The "Addicted: <drug>" and withdrawal effects are timed spells, so the game's
+    // own Active Effects timer counts them down. Their length is the time until the drug's dependency falls below kTier1Level.
+    // Real seconds until `level` has decayed to kTier1Level at perDayDecay level points per game day, with the game's
+    // timescale (game seconds per real second, the Timescale global; 20 by default). 0 for a level at or below the line, and
+    // for a decay, timescale or level that is not finite or not positive (no decay means no end, so no countdown).
+    double SecondsUntilClear(double level, double perDayDecay, double timescale);
+    // Fallback if the live duration cannot be set: fixed-length variants of each spell (real seconds, ascending), cast by the
+    // smallest one that is not shorter than the time left (the longest when none is; the shortest for a bad time).
+    inline constexpr std::array<double, 7> kTimedVariantSeconds{ 600.0, 3600.0, 10800.0, 28800.0, 64800.0, 129600.0, 259200.0 };
+    std::size_t PickTimedVariant(double seconds);
+    // The duration to write on a live effect: elapsed seconds plus the time left, at least one second more (so a bad input
+    // never ends the effect by accident); a bad elapsed time counts as 0.
+    float TimedDuration(float elapsedSeconds, double remainingSeconds);
+    // The live timers are re-synced right after a dose (or a new cast) and otherwise at most once per real minute: due when a
+    // dose was seen, when nothing has been synced yet (lastSync negative), when the clock went backwards or is not finite, or
+    // when kTimedResyncSeconds have passed.
+    inline constexpr double kTimedResyncSeconds = 60.0;
+    bool TimedResyncDue(double nowSeconds, double lastSyncSeconds, bool doseSeen);
+    // Screen effect while a high lasts: none for Rimerush (the stimulant), one for the other two. The comedown look is separate.
+    bool HasHighVisual(DrugType type);
+
     // "Addicted": a type's dependency level (after decay) is at least kTier1Level. One flag per drug type.
     bool                IsAddicted(float level);
     std::array<bool, 3> AddictedFlags(const Addiction& a, double nowHours);

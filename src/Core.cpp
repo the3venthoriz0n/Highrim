@@ -384,6 +384,62 @@ namespace Highrim::Core
         return WithdrawalNotice::kNone;
     }
 
+    double RavageAmountAfter(double currentAmount, double perSecond, double dtSeconds, double baseMax, double floor)
+    {
+        if (!std::isfinite(baseMax)) return 0.0;
+        const double f   = std::isfinite(floor) ? std::max(0.0, floor) : 0.0;
+        const double cap = baseMax - f;
+        if (!(cap > 0.0)) return 0.0;
+        const double current = std::isfinite(currentAmount) && currentAmount > 0.0 ? currentAmount : 0.0;
+        const bool   usable  = std::isfinite(perSecond) && std::isfinite(dtSeconds) && perSecond > 0.0 && dtSeconds > 0.0;
+        return std::min(current + (usable ? perSecond * dtSeconds : 0.0), cap);
+    }
+
+    bool RavageRecastNeeded(double appliedAmount, double wantedAmount, double step)
+    {
+        if (!(appliedAmount >= 0.0)) return true;                      // unknown (negative or not finite)
+        if (!std::isfinite(wantedAmount) || wantedAmount < 0.0) return true;  // unusable wanted amount: release
+        if (wantedAmount == 0.0) return appliedAmount > 0.0;
+        const double diff = std::fabs(wantedAmount - appliedAmount);
+        return std::isfinite(step) && step > 0.0 ? diff >= step : diff > 0.0;
+    }
+
+    double SecondsUntilClear(double level, double perDayDecay, double timescale)
+    {
+        if (!std::isfinite(level) || !std::isfinite(perDayDecay) || !std::isfinite(timescale)) return 0.0;
+        if (perDayDecay <= 0.0 || timescale <= 0.0 || level <= static_cast<double>(kTier1Level)) return 0.0;
+        const double days = (level - static_cast<double>(kTier1Level)) / perDayDecay;
+        return days * 86400.0 / timescale;
+    }
+
+    std::size_t PickTimedVariant(double seconds)
+    {
+        if (!std::isfinite(seconds)) return 0;
+        for (std::size_t i = 0; i < kTimedVariantSeconds.size(); ++i) {
+            if (kTimedVariantSeconds[i] >= seconds) return i;
+        }
+        return kTimedVariantSeconds.size() - 1;
+    }
+
+    float TimedDuration(float elapsedSeconds, double remainingSeconds)
+    {
+        const double elapsed   = std::isfinite(elapsedSeconds) && elapsedSeconds > 0.0f ? static_cast<double>(elapsedSeconds) : 0.0;
+        const double remaining = std::isfinite(remainingSeconds) ? std::max(1.0, remainingSeconds) : 1.0;
+        return static_cast<float>(elapsed + remaining);
+    }
+
+    bool TimedResyncDue(double nowSeconds, double lastSyncSeconds, bool doseSeen)
+    {
+        if (!std::isfinite(nowSeconds) || !std::isfinite(lastSyncSeconds) || lastSyncSeconds < 0.0) return true;
+        if (doseSeen || nowSeconds < lastSyncSeconds) return true;
+        return nowSeconds - lastSyncSeconds >= kTimedResyncSeconds;
+    }
+
+    bool HasHighVisual(DrugType type)
+    {
+        return type != DrugType::kStimulant;
+    }
+
     bool IsHigh(const ComedownTimers& t)
     {
         for (const auto& due : t.dueSeconds) {
@@ -523,9 +579,9 @@ namespace Highrim::Core
     const char* RiskTierDescription(RiskTier tier)
     {
         switch (tier) {
-        case RiskTier::kLow: return "Your body is handling it, for now.";
-        case RiskTier::kElevated: return "Your heart is racing. One more dose could knock you out.";
-        case RiskTier::kHigh: return "You are on the edge. Another dose may put you on the floor, or worse.";
+        case RiskTier::kLow: return "You are handling it, for now.";
+        case RiskTier::kElevated: return "One more dose could knock you out.";
+        case RiskTier::kHigh: return "Another dose may put you on the floor.";
         default: return "";
         }
     }

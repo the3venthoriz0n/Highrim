@@ -37,6 +37,7 @@ namespace
     {
         const double nan = std::numeric_limits<double>::quiet_NaN();
         const double inf = std::numeric_limits<double>::infinity();
+        auto nan_f = [] { return std::numeric_limits<float>::quiet_NaN(); };
 
         // Dose stacks: per drug, window 30 min = 0.5 h.
         {
@@ -266,8 +267,72 @@ namespace
             CHECK(FaintHangoverExpiry(50.0, nan) == 50.0);            // no usable clock: nothing changes
             CHECK(std::string(FaintStartMessage()) == "You pass out for a moment...");
             CHECK(std::string(FaintEndMessage()) == "You come to, head pounding.");
-            CHECK(std::string(RiskRiseMessage(RiskTier::kLow)) == "Overdose Risk: Low. Your body is handling it, for now.");
+            CHECK(std::string(RiskRiseMessage(RiskTier::kLow)) == "Overdose Risk: Low. You are handling it, for now.");
             CHECK(std::string(RiskRiseMessage(RiskTier::kNone)).empty());
+        }
+
+        // Task 18: timed addiction and withdrawal. Seconds until the dependency falls below kTier1Level, in real seconds.
+        {
+            // level 100 at 3/day (Rimerush): 30 game days = 2592000 game s; at timescale 20 that is 129600 real s.
+            CHECK(std::fabs(SecondsUntilClear(100.0, 3.0, 20.0) - 129600.0) < 1e-6);
+            CHECK(std::fabs(SecondsUntilClear(40.0, 5.0, 20.0) - 25920.0) < 1e-6);   // 6 game days at timescale 20: 7.2 h real
+            CHECK(std::fabs(SecondsUntilClear(40.0, 5.0, 10.0) - 51840.0) < 1e-6);   // slower clock: twice as long in real time
+            CHECK(std::fabs(SecondsUntilClear(11.0, 5.0, 20.0) - 864.0) < 1e-6);
+            CHECK(SecondsUntilClear(10.0, 5.0, 20.0) == 0.0);                          // already at the line
+            CHECK(SecondsUntilClear(9.0, 5.0, 20.0) == 0.0 && SecondsUntilClear(-3.0, 5.0, 20.0) == 0.0);
+            CHECK(SecondsUntilClear(50.0, 0.0, 20.0) == 0.0 && SecondsUntilClear(50.0, -1.0, 20.0) == 0.0);  // no decay: no end, no timer
+            CHECK(SecondsUntilClear(50.0, 5.0, 0.0) == 0.0 && SecondsUntilClear(50.0, 5.0, -2.0) == 0.0);
+            CHECK(SecondsUntilClear(nan, 5.0, 20.0) == 0.0 && SecondsUntilClear(50.0, nan, 20.0) == 0.0 && SecondsUntilClear(50.0, 5.0, nan) == 0.0);
+            CHECK(SecondsUntilClear(inf, 5.0, 20.0) == 0.0);
+            CHECK(SecondsUntilClear(100.0, DecayPerDayFor(DrugType::kStimulant), 20.0) > SecondsUntilClear(100.0, DecayPerDayFor(DrugType::kDepressant), 20.0));
+            // fixed-length variants (fallback): the smallest one that is not shorter than the time left
+            CHECK(kTimedVariantSeconds.size() == 7);
+            for (std::size_t i = 1; i < kTimedVariantSeconds.size(); ++i) CHECK(kTimedVariantSeconds[i] > kTimedVariantSeconds[i - 1]);
+            CHECK(PickTimedVariant(1.0) == 0 && PickTimedVariant(600.0) == 0 && PickTimedVariant(600.5) == 1);
+            CHECK(PickTimedVariant(129600.0) == 5 && PickTimedVariant(129601.0) == 6);
+            CHECK(PickTimedVariant(1e9) == 6);                                         // longer than all: the longest
+            CHECK(PickTimedVariant(0.0) == 0 && PickTimedVariant(-5.0) == 0 && PickTimedVariant(nan) == 0);
+            // the live effect's duration: elapsed plus what is left, never below the time already run
+            CHECK(std::fabs(TimedDuration(30.f, 100.0) - 130.0) < 1e-3);
+            CHECK(TimedDuration(30.f, 0.0) >= 31.0f && TimedDuration(30.f, -5.0) >= 31.0f);   // at least one more second
+            CHECK(TimedDuration(-4.f, 10.0) == 10.0f);                                  // a bad elapsed time counts as 0
+            CHECK(TimedDuration(nan_f(), 10.0) == 10.0f && TimedDuration(5.f, nan) == 6.0f);
+            // re-sync: right after a dose or a new cast, otherwise at most once per kTimedResyncSeconds (never per frame)
+            CHECK(kTimedResyncSeconds == 60.0);
+            CHECK(!TimedResyncDue(100.0, 90.0, false) && !TimedResyncDue(149.9, 90.0, false));
+            CHECK(TimedResyncDue(150.0, 90.0, false) && TimedResyncDue(1000.0, 90.0, false));
+            CHECK(TimedResyncDue(91.0, 90.0, true));                                   // a dose changes the level at once
+            CHECK(TimedResyncDue(100.0, -1.0, false));                                 // never synced
+            CHECK(TimedResyncDue(50.0, 90.0, false));                                  // clock went backwards: sync
+            CHECK(TimedResyncDue(nan, 90.0, false));
+            // a stimulant high has no screen effect
+            CHECK(!HasHighVisual(DrugType::kStimulant) && HasHighVisual(DrugType::kDepressant) && HasHighVisual(DrugType::kHallucinogen));
+        }
+
+        // Task 18: Ravage-style maximum reduction instead of the direct drain.
+        {
+            // gains rate * dt per call, never above baseMax - floor, never below what is already applied (up to the cap)
+            CHECK(std::fabs(RavageAmountAfter(0.0, 2.0, 1.0, 100.0, 0.0) - 2.0) < 1e-9);
+            CHECK(std::fabs(RavageAmountAfter(10.0, 2.5, 2.0, 100.0, 0.0) - 15.0) < 1e-9);
+            CHECK(RavageAmountAfter(99.0, 5.0, 1.0, 100.0, 0.0) == 100.0);             // magicka / stamina can reach 0
+            CHECK(RavageAmountAfter(94.0, 5.0, 1.0, 100.0, kHealthDrainFloor) == 95.0);  // health stays at the floor
+            CHECK(RavageAmountAfter(95.0, 5.0, 1.0, 100.0, kHealthDrainFloor) == 95.0);
+            CHECK(RavageAmountAfter(80.0, 5.0, 1.0, 60.0, 0.0) == 60.0);               // the maximum shrank (a potion ran out): clamp
+            CHECK(RavageAmountAfter(5.0, 0.0, 1.0, 100.0, 0.0) == 5.0);                // no rate, no time: unchanged
+            CHECK(RavageAmountAfter(5.0, 2.0, 0.0, 100.0, 0.0) == 5.0 && RavageAmountAfter(5.0, -2.0, 1.0, 100.0, 0.0) == 5.0);
+            CHECK(RavageAmountAfter(5.0, nan, 1.0, 100.0, 0.0) == 5.0 && RavageAmountAfter(5.0, 2.0, nan, 100.0, 0.0) == 5.0);
+            CHECK(RavageAmountAfter(0.0, 2.0, 1.0, 0.0, 0.0) == 0.0 && RavageAmountAfter(0.0, 2.0, 1.0, nan, 0.0) == 0.0);
+            CHECK(RavageAmountAfter(nan, 2.0, 1.0, 100.0, 0.0) == 2.0);                // a lost value starts again from 0
+            CHECK(RavageAmountAfter(-4.0, 2.0, 1.0, 100.0, 0.0) == 2.0);
+            // when to cast the ravage spell again (the magnitude is fixed at cast time)
+            CHECK(RavageRecastNeeded(-1.0, 5.0, kRavageRecastStep));                   // unknown applied state: always
+            CHECK(!RavageRecastNeeded(10.0, 11.9, 2.0) && RavageRecastNeeded(10.0, 12.0, 2.0));
+            CHECK(RavageRecastNeeded(10.0, 0.0, 2.0) && !RavageRecastNeeded(0.0, 0.0, 2.0));   // release is never skipped
+            CHECK(!RavageRecastNeeded(0.0, 1.0, 2.0) && RavageRecastNeeded(0.0, 2.0, 2.0));
+            CHECK(RavageRecastNeeded(95.0, 100.0, 2.0) && !RavageRecastNeeded(100.0, 100.0, 2.0));
+            CHECK(RavageRecastNeeded(10.0, 10.5, 0.0) && !RavageRecastNeeded(10.0, 10.0, 0.0));  // a bad step counts as any change
+            CHECK(RavageRecastNeeded(10.0, nan, 2.0));                                 // unusable wanted amount: release
+            CHECK(kDrainUsesRavage);                                                   // the active path (the fallback is the direct drain)
         }
 
         // Rimerush withdrawal drain.

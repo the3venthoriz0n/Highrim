@@ -74,6 +74,31 @@ namespace Highrim::Ragdoll
         g_state = {};
     }
 
+    const char* KnockNow(const char* reason)
+    {
+        const char* why = reason ? reason : "?";
+        try {
+            auto*      player  = RE::PlayerCharacter::GetSingleton();
+            const auto failure = GuardFailure(player);
+            if (!failure.empty()) {
+                spdlog::info("Ragdoll: knock for {} skipped ({})", why, failure);
+                return nullptr;
+            }
+            const char* route = Knock(player);
+            if (route) {
+                spdlog::info("Ragdoll: knocked down for {} (route {})", why, route);
+            } else {
+                spdlog::warn("Ragdoll: knock for {} failed (no process and the animation event was refused)", why);
+            }
+            return route;
+        } catch (const std::exception& e) {
+            spdlog::error("Ragdoll: exception in KnockNow: {}", e.what());
+        } catch (...) {
+            spdlog::error("Ragdoll: unknown exception in KnockNow");
+        }
+        return nullptr;
+    }
+
     void Tick(bool highActive, int stack)
     {
         try {

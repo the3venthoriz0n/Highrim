@@ -76,6 +76,40 @@ namespace
         CHECK(StackLevel(0) == 0 && StackLevel(1) == 0 && StackLevel(-4) == 0);
         CHECK(StackLevel(2) == 1 && StackLevel(3) == 2 && StackLevel(4) == 3);
         CHECK(StackLevel(5) == 3 && StackLevel(1000) == 3);
+        // Combined counter: any drug, same window rules.
+        {
+            DoseTotals t{};
+            CHECK(AddAnyDose(t, 10.0, 30) == 1);
+            CHECK(AddAnyDose(t, 10.2, 30) == 2);   // the counter has no drug: any drug counts
+            CHECK(AddAnyDose(t, 10.7, 30) == 3);   // 0.5 h after the previous dose: exactly the window
+            CHECK(AddAnyDose(t, 11.3, 30) == 1);   // older than the window restarts
+            CHECK(AddAnyDose(t, 11.3, 0) == 1);    // bad window restarts
+            CHECK(AddAnyDose(t, 11.4, 120) == 2);
+            CHECK(AddAnyDose(t, nan, 120) == 1);   // non-finite restarts and leaves no previous dose
+            CHECK(AddAnyDose(t, 12.0, 120) == 1);
+            CHECK(AddAnyDose(t, 5.0, 120) == 1);   // clock went backwards
+            int last = 0;
+            for (int i = 0; i < 5000; ++i) last = AddAnyDose(t, 5.0, 30);
+            CHECK(last > 8 && last < 5000);
+            // Mixed doses reach the blackout count although no single drug stack does.
+            DoseStacks st{};
+            DoseTotals tot{};
+            int total = 0, s0 = 0, s1 = 0;
+            s0 = AddStackedDose(st, DrugType::kStimulant, 2.0, 30);     total = AddAnyDose(tot, 2.0, 30);
+            s1 = AddStackedDose(st, DrugType::kDepressant, 2.1, 30);    total = AddAnyDose(tot, 2.1, 30);
+            s0 = AddStackedDose(st, DrugType::kStimulant, 2.2, 30);     total = AddAnyDose(tot, 2.2, 30);
+            s1 = AddStackedDose(st, DrugType::kHallucinogen, 2.3, 30);  total = AddAnyDose(tot, 2.3, 30);
+            CHECK(s0 == 2 && s1 == 1 && total == 4 && ShouldBlackout(total, 4) && !ShouldBlackout(s0, 4));
+        }
+        // Velvet Haze screen strength rises with every stack, capped at 1.
+        CHECK(StrengthForVelvetStack(1) == 0.5);
+        CHECK(StrengthForVelvetStack(0) == 0.5 && StrengthForVelvetStack(-2) == 0.5);
+        CHECK(std::fabs(StrengthForVelvetStack(2) - 0.7) < 1e-9 && std::fabs(StrengthForVelvetStack(3) - 0.9) < 1e-9);
+        CHECK(StrengthForVelvetStack(4) == 1.0 && StrengthForVelvetStack(99) == 1.0);
+        CHECK(StrengthForVelvetStack(1) < StrengthForVelvetStack(2) && StrengthForVelvetStack(2) < StrengthForVelvetStack(3) &&
+              StrengthForVelvetStack(3) < StrengthForVelvetStack(4));
+        // Blackout start after the knock.
+        CHECK(kRagdollFirstSeconds == 2.5 && BlackoutStartAfterKnock(100.0) == 102.5);
         CHECK(StrengthForStack(1) == 0.6);
         CHECK(StrengthForStack(0) == 0.6 && StrengthForStack(-3) == 0.6);
         CHECK(StrengthForStack(4) == 1.0 && StrengthForStack(8) == 1.0 && StrengthForStack(100000) == 1.0);
@@ -94,7 +128,7 @@ namespace
             Addiction a = fresh();
             a.level[0] = 50.f;
             Decay(a, 24.0);  // one day
-            CHECK(std::fabs(a.level[0] - 40.f) < 1e-3f);
+            CHECK(std::fabs(a.level[0] - 45.f) < 1e-3f);
             CHECK(a.lastUpdateHours == 24.0);
             Decay(a, 24.0 * 100);  // floor at 0
             CHECK(a.level[0] == 0.f);
@@ -116,37 +150,37 @@ namespace
         {
             Addiction a = fresh();
             AddDose(a, DrugType::kDepressant, 5.0);
-            CHECK(a.level[1] == 20.f);
+            CHECK(a.level[1] == 30.f);
             CHECK(a.lastDoseHours[1] == 5.0);
             CHECK(a.lastDoseHours[0] < 0.0 && a.lastDoseHours[2] < 0.0);
             CHECK(a.lastUpdateHours == 5.0);
-            AddDose(a, DrugType::kDepressant, 5.0 + 24.0);  // decays 10 first, then +20
-            CHECK(std::fabs(a.level[1] - 30.f) < 1e-3f);
+            AddDose(a, DrugType::kDepressant, 5.0 + 24.0);  // decays 5 first, then +30
+            CHECK(std::fabs(a.level[1] - 55.f) < 1e-3f);
             for (int i = 0; i < 10; ++i) AddDose(a, DrugType::kDepressant, 29.0);
             CHECK(a.level[1] == 100.f);
             AddDose(a, DrugType::kHallucinogen, 29.0);
-            CHECK(a.level[2] == 20.f);
+            CHECK(a.level[2] == 30.f);
         }
 
         // WithdrawalTier.
         CHECK(WithdrawalTier(9.9f, 100.0) == 0);
         CHECK(WithdrawalTier(10.f, 100.0) == 1);
-        CHECK(WithdrawalTier(39.9f, 100.0) == 1);
-        CHECK(WithdrawalTier(40.f, 100.0) == 2);
-        CHECK(WithdrawalTier(69.9f, 100.0) == 2);
-        CHECK(WithdrawalTier(70.f, 100.0) == 3);
+        CHECK(WithdrawalTier(34.9f, 100.0) == 1);
+        CHECK(WithdrawalTier(35.f, 100.0) == 2);
+        CHECK(WithdrawalTier(59.9f, 100.0) == 2);
+        CHECK(WithdrawalTier(60.f, 100.0) == 3);
         CHECK(WithdrawalTier(100.f, 100.0) == 3);
-        CHECK(WithdrawalTier(70.f, 5.99) == 0);
-        CHECK(WithdrawalTier(70.f, 6.0) == 3);
+        CHECK(WithdrawalTier(60.f, 3.99) == 0);
+        CHECK(WithdrawalTier(60.f, 4.0) == 3);
 
         // HighestTier decays a copy and does not mutate.
         {
             Addiction a = fresh();
             a.level[0] = 15.f; a.lastDoseHours[0] = 0.0;
             a.level[2] = 75.f; a.lastDoseHours[2] = 0.0;
-            CHECK(HighestTier(a, 6.0) == 3);
+            CHECK(HighestTier(a, 4.0) == 3);
             CHECK(a.level[2] == 75.f && a.lastUpdateHours == 0.0);
-            CHECK(HighestTier(a, 5.0) == 0);
+            CHECK(HighestTier(a, 3.5) == 0);
             Addiction b = fresh();
             b.level[1] = 50.f;  // never dosed (negative): treated as long ago, tier applies
             CHECK(HighestTier(b, 1.0) == 2);
@@ -542,7 +576,7 @@ int main()
     Highrim::Config::Load();
     auto s = Highrim::Config::Get();
     CHECK(s.enabled && s.overdose && s.addiction && !s.debug);
-    CHECK(s.doseWindowMinutes == 30);
+    CHECK(s.doseWindowMinutes == 120);
     CHECK(s.blackoutDoses == 4);
     CHECK(s.ragdoll);
     CHECK(s.debugBlackoutKey == 0);

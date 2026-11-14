@@ -7,6 +7,7 @@
 #include "Doses.h"
 #include "Forms.h"
 #include "Prison.h"
+#include "Ragdoll.h"
 #include "Withdrawal.h"
 
 #include <cmath>
@@ -457,8 +458,26 @@ namespace Highrim::Blackout
             }
         }
 
+        // Set when the hotkey knocked the player down; the blackout starts when it passes.
+        std::optional<std::chrono::steady_clock::time_point> g_hotkeyDue;
+        std::uint32_t                                         g_hotkeyGeneration = 0;
+
+        void PollHotkeyDue()
+        {
+            if (!g_hotkeyDue || std::chrono::steady_clock::now() < *g_hotkeyDue) {
+                return;
+            }
+            g_hotkeyDue.reset();
+            if (g_hotkeyGeneration != g_generation.load()) {
+                spdlog::info("Blackout: hotkey blackout dropped, a load, new game or death happened meanwhile");
+                return;
+            }
+            Run("hotkey");
+        }
+
         void PollHotkey()
         {
+            PollHotkeyDue();
             static bool wasDown = false;
             const auto  key     = Config::Get().debugBlackoutKey;
             if (key == 0) {
@@ -477,7 +496,17 @@ namespace Highrim::Blackout
                     spdlog::info("Blackout: hotkey ignored, a menu is open");
                 } else {
                     spdlog::info("Blackout: hotkey pressed (scan code {})", key);
-                    Run("hotkey");
+                    if (g_hotkeyDue) {
+                        spdlog::info("Blackout: hotkey ignored, a blackout is already about to start");
+                    } else {
+                        const char* route = Ragdoll::KnockNow("hotkey blackout");
+                        spdlog::info("Blackout: ragdoll first (route {}), starting in {:.1f} s", route ? route : "none",
+                            Core::kRagdollFirstSeconds);
+                        g_hotkeyDue = std::chrono::steady_clock::now() +
+                                      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                          std::chrono::duration<double>(Core::kRagdollFirstSeconds));
+                        g_hotkeyGeneration = g_generation.load();
+                    }
                 }
             }
             wasDown = down;

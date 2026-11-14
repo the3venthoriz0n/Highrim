@@ -9,7 +9,9 @@
 #include "Ragdoll.h"
 #include "State.h"
 
+#include <algorithm>
 #include <array>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -17,8 +19,7 @@ namespace Highrim::Doses
 {
     namespace
     {
-        // Give the potion's own effect time to apply before the blackout takes the player's gear.
-        constexpr double kOverdoseDelaySeconds = 1.5;
+        // A dose-triggered blackout first knocks the player down; it starts Core::kRagdollFirstSeconds later.
         // Screen effects are re-triggered this often while a high lasts (image space modifiers fade).
         constexpr double kVisualPeriodSeconds = 10.0;
 
@@ -26,12 +27,16 @@ namespace Highrim::Doses
         std::mutex            g_mutex;
         Core::ComedownTimers  g_comedowns{};
         Core::DiagnosticTimers g_diagnostics{};
-        std::optional<double> g_overdoseDue;  // real seconds
+        std::optional<double> g_overdoseDue;  // real seconds: when the knock-down is due (waits while a menu is open)
+        std::optional<double> g_blackoutDue;  // real seconds: when the blackout itself starts (set by the knock)
         Core::DoseStacks      g_stacks{};
+        Core::DoseTotals      g_totals{};     // doses of any drug, for the blackout count
         std::array<int, 3>    g_wantedLevel{};               // stack ability level each drug should carry (0 = none)
         std::array<int, 3>    g_appliedLevel{ -1, -1, -1 };  // what the player carries; -1 = unknown, always re-sync
         std::array<double, 3> g_strength{ 0.6, 0.6, 0.6 };
         std::array<std::optional<double>, 3> g_visualDue{};  // real seconds; set while that drug's high lasts
+        std::array<bool, 3>   g_visualActive{};              // a screen effect was triggered and not stopped yet
+        std::array<bool, 3>   g_visualStop{};                // the game thread must stop it (high ended, load, blackout)
         std::uint32_t         g_epoch = 0;                   // bumped on every reset so stale game-thread work is dropped
 
         constexpr std::array<std::array<std::uint32_t, 3>, 3> kStackIds{ {
@@ -39,7 +44,7 @@ namespace Highrim::Doses
             { Forms::HighrimStackVelvetHaze1, Forms::HighrimStackVelvetHaze2, Forms::HighrimStackVelvetHaze3 },
             { Forms::HighrimStackDreamcap1, Forms::HighrimStackDreamcap2, Forms::HighrimStackDreamcap3 },
         } };
-        constexpr std::array<std::uint32_t, 3> kImodIds{ Forms::kImodStimulant, Forms::kImodDepressant, Forms::kImodHallucinogen };
+        constexpr std::array<std::uint32_t, 3> kImodIds{ Forms::kImodStimulant, 0u /* Velvet Haze: our own IMAD, see LookupImod */, Forms::kImodHallucinogen };
 
         double RealSeconds()
         {
@@ -120,7 +125,8 @@ namespace Highrim::Doses
             auto* target = player->AsMagicTarget();
             auto* list   = target ? target->GetActiveEffectList() : nullptr;
             spdlog::info("Effects ({}): pass {} for {}", pass == 1 ? "0.5 s" : "5 s", pass, DrugName(type));
-            int active = 0;
+            int                      active = 0;
+            std::vector<RE::FormID>  activeBases;
             if (list) {
                 for (auto* ae : *list) {
                     if (!ae || !ae->effect || !ae->effect->baseEffect) {
@@ -136,6 +142,7 @@ namespace Highrim::Doses
                         for (auto* fx : potion->effects) {
                             if (fx && fx->baseEffect == base) {
                                 ++active;
+                                activeBases.push_back(base->GetFormID());
                                 break;
                             }
                         }
@@ -146,6 +153,17 @@ namespace Highrim::Doses
             }
             const int expected = potion ? static_cast<int>(potion->effects.size()) : 0;
             spdlog::info("Highrim effects active: {} of {} expected for {}", active, expected, DrugName(type));
+            std::string missing;
+            if (potion) {
+                for (auto* fx : potion->effects) {
+                    if (fx && fx->baseEffect &&
+                        std::find(activeBases.begin(), activeBases.end(), fx->baseEffect->GetFormID()) == activeBases.end()) {
+                        if (!missing.empty()) missing += ", ";
+                        missing += std::string(SafeName(fx->baseEffect, true)) + " ('" + SafeName(fx->baseEffect, false) + "')";
+                    }
+                }
+            }
+            spdlog::info("Highrim effects missing: {}", missing.empty() ? "none" : missing);
         }
 
         void CastComedown(Core::DrugType type)
@@ -241,16 +259,41 @@ namespace Highrim::Doses
             }
         }
 
+        // Velvet Haze uses our own blur-free IMAD (in the plugin); the others are vanilla records.
+        RE::TESImageSpaceModifier* LookupImod(Core::DrugType type)
+        {
+            if (type == Core::DrugType::kDepressant) {
+                auto* handler = RE::TESDataHandler::GetSingleton();
+                return handler ? handler->LookupForm<RE::TESImageSpaceModifier>(Forms::HighrimImodVelvet, Forms::kPluginName)
+                               : nullptr;
+            }
+            return RE::TESForm::LookupByID<RE::TESImageSpaceModifier>(kImodIds[static_cast<std::size_t>(type)]);
+        }
+
         void TriggerVisual(Core::DrugType type, double strength)
         {
-            const auto id   = kImodIds[static_cast<std::size_t>(type)];
-            auto*      imod = RE::TESForm::LookupByID<RE::TESImageSpaceModifier>(id);
+            auto* imod = LookupImod(type);
             if (!imod) {
-                spdlog::error("Visual: image space modifier {:08X} for {} not found", id, DrugName(type));
+                spdlog::error("Visual: image space modifier for {} not found", DrugName(type));
                 return;
             }
             RE::ImageSpaceModifierInstanceForm::Trigger(imod, static_cast<float>(strength), nullptr);
-            spdlog::debug("Visual: {} image space modifier {:08X} at strength {:.2f}", DrugName(type), id, strength);
+            {
+                std::lock_guard lock(g_mutex);
+                g_visualActive[static_cast<std::size_t>(type)] = true;
+            }
+            spdlog::debug("Visual: {} image space modifier {:08X} at strength {:.2f}", DrugName(type), imod->GetFormID(), strength);
+        }
+
+        void StopVisual(Core::DrugType type)
+        {
+            auto* imod = LookupImod(type);
+            if (!imod) {
+                spdlog::error("Visual: cannot stop the {} image space modifier, not found", DrugName(type));
+                return;
+            }
+            RE::ImageSpaceModifierInstanceForm::Stop(imod);
+            spdlog::info("Visual: stopped {} image space modifier {:08X}", DrugName(type), imod->GetFormID());
         }
 
         void OnDrugConsumed(Core::DrugType type)
@@ -269,12 +312,23 @@ namespace Highrim::Doses
 
             std::lock_guard lock(g_mutex);
             const auto      i             = static_cast<std::size_t>(type);
-            const int       stack         = Core::AddStackedDose(g_stacks, type, now, static_cast<int>(settings.doseWindowMinutes));
+            const int       windowMin     = static_cast<int>(settings.doseWindowMinutes);
+            const double    previousHours = g_totals.lastHours;
+            const int       stack         = Core::AddStackedDose(g_stacks, type, now, windowMin);
+            const int       total         = Core::AddAnyDose(g_totals, now, windowMin);
             const int       blackoutDoses = static_cast<int>(settings.blackoutDoses);
             const int       level         = Core::StackLevel(stack);
-            const double    strength      = Core::StrengthForStack(stack);
-            const bool      blackout      = settings.overdose && Core::ShouldBlackout(stack, blackoutDoses);
-            spdlog::info("Dose: {} stack {}/{} level {} strength {:.2f}", DrugName(type), stack, blackoutDoses, level, strength);
+            const double    strength      = type == Core::DrugType::kDepressant ? Core::StrengthForVelvetStack(stack)
+                                                                                 : Core::StrengthForStack(stack);
+            const bool      blackout      = settings.overdose && Core::ShouldBlackout(total, blackoutDoses);
+            std::string     previous      = "none";
+            if (previousHours >= 0.0 && std::isfinite(previousHours)) {
+                previous = fmt::format("{:.1f} min ago", (now - previousHours) * 60.0);
+            }
+            const char* verdict = blackout ? "blackout" : !settings.overdose ? "no blackout: bOverdose is off"
+                                                                              : "no blackout: total below the dose count";
+            spdlog::info("Dose: {} stack {}/{}, total {}/{}, window {} min, previous dose {} -> {} (level {} strength {:.2f})",
+                DrugName(type), stack, blackoutDoses, total, blackoutDoses, windowMin, previous, verdict, level, strength);
             spdlog::info("Dose: {} addiction {:.1f}/{:.1f}/{:.1f} blackout={} (game hour {:.2f}, addiction {}, overdose setting {})",
                 DrugName(type), r.after.level[0], r.after.level[1], r.after.level[2], blackout, now,
                 settings.addiction ? "on" : "off", settings.overdose ? "on" : "off");
@@ -284,11 +338,11 @@ namespace Highrim::Doses
                 Ragdoll::OnDepressantDose();
             }
             Core::ScheduleDiagnostics(g_diagnostics, type, RealSeconds());
-            if (blackout || g_overdoseDue) {
+            if (blackout || g_overdoseDue || g_blackoutDue) {
                 // A blackout is coming: no stack ability from here on (and the current one goes).
                 g_wantedLevel[i] = 0;
-                if (blackout && !g_overdoseDue) {
-                    g_overdoseDue = RealSeconds() + kOverdoseDelaySeconds;
+                if (blackout && !g_overdoseDue && !g_blackoutDue) {
+                    g_overdoseDue = RealSeconds();  // knock down now (waits for menus), blackout kRagdollFirstSeconds later
                 }
             } else {
                 g_wantedLevel[i] = level;
@@ -339,7 +393,10 @@ namespace Highrim::Doses
     void Tick()
     {
         bool                        runOverdose = false;
+        bool                        runKnock    = false;
+        bool                        blackoutPending = false;
         std::vector<Core::DrugType> due;
+        std::vector<Core::DrugType> stops;
         std::vector<Core::DiagnosticEntry> diagnostics;
         std::vector<std::pair<Core::DrugType, double>> visuals;
         const bool                  uiBlocked = Blackout::MenuOrPauseActive();
@@ -354,26 +411,54 @@ namespace Highrim::Doses
                 switch (Core::DecideOverdose(now, *g_overdoseDue, uiBlocked)) {
                 case Core::OverdoseAction::kRun:
                     g_overdoseDue.reset();
-                    runOverdose = true;
+                    runKnock      = true;
+                    g_blackoutDue = Core::BlackoutStartAfterKnock(now);
                     break;
                 case Core::OverdoseAction::kDrop:
                     g_overdoseDue.reset();
-                    spdlog::warn("Dose: overdose dropped, a menu was open or the game was paused for {:.0f} s", Core::kOverdoseGiveUpSeconds);
+                    spdlog::warn("Dose: overdose dropped before the knock-down: a menu was open or the game was paused for {:.0f} s",
+                        Core::kOverdoseGiveUpSeconds);
                     break;
                 default:
                     break;
                 }
             }
+            if (g_blackoutDue) {
+                switch (Core::DecideOverdose(now, *g_blackoutDue, uiBlocked)) {
+                case Core::OverdoseAction::kRun:
+                    g_blackoutDue.reset();
+                    runOverdose = true;
+                    break;
+                case Core::OverdoseAction::kDrop:
+                    g_blackoutDue.reset();
+                    spdlog::warn("Dose: overdose dropped before the blackout: a menu was open or the game was paused for {:.0f} s",
+                        Core::kOverdoseGiveUpSeconds);
+                    break;
+                default:
+                    break;
+                }
+            }
+            blackoutPending = g_overdoseDue.has_value() || g_blackoutDue.has_value();
             while (auto d = Core::TakeDueComedown(g_comedowns, now)) {
                 due.push_back(*d);
                 // The high ends: its stack ability and screen effect go (the stack count keeps its own window).
                 g_wantedLevel[static_cast<std::size_t>(*d)] = 0;
                 g_visualDue[static_cast<std::size_t>(*d)].reset();
+                g_visualStop[static_cast<std::size_t>(*d)] = true;
             }
             for (std::size_t i = 0; i < 3; ++i) {
-                if (g_visualDue[i] && now >= *g_visualDue[i] && !busy && !g_overdoseDue) {
+                if (g_visualDue[i] && now >= *g_visualDue[i] && !busy && !blackoutPending && !runKnock) {
                     visuals.emplace_back(static_cast<Core::DrugType>(i), g_strength[i]);
                     g_visualDue[i] = now + kVisualPeriodSeconds;
+                }
+            }
+            for (std::size_t i = 0; i < 3; ++i) {
+                if (g_visualStop[i]) {
+                    g_visualStop[i] = false;
+                    if (g_visualActive[i]) {
+                        g_visualActive[i] = false;
+                        stops.push_back(static_cast<Core::DrugType>(i));
+                    }
                 }
             }
             // The Velvet Haze high lasts from its dose until its comedown is taken above.
@@ -383,14 +468,22 @@ namespace Highrim::Doses
                 diagnostics.push_back(*e);
             }
         }
+        for (auto d : stops) {
+            StopVisual(d);
+        }
         for (auto d : due) {
             CastComedown(d);
+        }
+        if (runKnock) {
+            const char* route = Ragdoll::KnockNow("overdose");
+            spdlog::info("Blackout: ragdoll first (route {}), starting in {:.1f} s", route ? route : "none (blackout starts anyway)",
+                Core::kRagdollFirstSeconds);
         }
         for (const auto& [type, strength] : visuals) {
             TriggerVisual(type, strength);
         }
         SyncStackAbilities();
-        Ragdoll::Tick(ragdollActive && !runOverdose, ragdollStack);
+        Ragdoll::Tick(ragdollActive && !runOverdose && !blackoutPending && !runKnock, ragdollStack);
         for (const auto& e : diagnostics) {
             LogActiveEffects(e.type, e.pass);
         }
@@ -406,12 +499,15 @@ namespace Highrim::Doses
         Core::CancelComedowns(g_comedowns);
         g_diagnostics.pending.clear();
         g_overdoseDue.reset();
+        g_blackoutDue.reset();
         // Load, new game, revert or blackout start: forget the stacks and have the game thread strip every stack
         // ability (unknown applied state forces a full sync).
         Core::ResetStacks(g_stacks);
+        g_totals = Core::DoseTotals{};
         g_wantedLevel  = {};
         g_appliedLevel = { -1, -1, -1 };
         g_visualDue    = {};
+        g_visualStop   = g_visualActive;  // the game thread stops whatever screen effect is still running
         ++g_epoch;
         Ragdoll::Reset();
     }

@@ -12,10 +12,6 @@ namespace Highrim::Core
 {
     namespace
     {
-        constexpr float  kDoseAmount = 20.f;
-        constexpr float  kMaxLevel = 100.f;
-        constexpr double kDecayPerDay = 10.0;
-        constexpr double kMinHoursForWithdrawal = 6.0;
 
         template <class T>
         bool ParseNumber(std::string_view token, T& out)
@@ -36,6 +32,24 @@ namespace Highrim::Core
             const auto res = std::to_chars(buf, buf + sizeof(buf), value);
             out.append(buf, res.ptr);
         }
+    }
+
+    int AddAnyDose(DoseTotals& t, double nowHours, int windowMinutes)
+    {
+        bool inWindow = false;
+        if (windowMinutes >= 1 && std::isfinite(nowHours) && std::isfinite(t.lastHours) && t.lastHours >= 0.0 && t.count > 0) {
+            const double elapsed = nowHours - t.lastHours;
+            inWindow = elapsed >= 0.0 && elapsed <= static_cast<double>(windowMinutes) / 60.0;
+        }
+        t.count     = inWindow ? std::min(t.count + 1, kMaxStack) : 1;
+        t.lastHours = std::isfinite(nowHours) ? nowHours : -1.0;
+        return t.count;
+    }
+
+    double StrengthForVelvetStack(int stack)
+    {
+        if (stack < 1) return kVelvetStrengthBase;
+        return std::min(1.0, kVelvetStrengthBase + kVelvetStrengthStep * static_cast<double>(stack - 1));
     }
 
     int AddStackedDose(DoseStacks& s, DrugType type, double nowHours, int windowMinutes)
@@ -99,9 +113,9 @@ namespace Highrim::Core
 
     int WithdrawalTier(float level, double hoursSinceLastDose)
     {
-        if (level < 10.f || hoursSinceLastDose < kMinHoursForWithdrawal) return 0;
-        if (level < 40.f) return 1;
-        if (level < 70.f) return 2;
+        if (level < kTier1Level || hoursSinceLastDose < kWithdrawalGraceHours) return 0;
+        if (level < kTier2Level) return 1;
+        if (level < kTier3Level) return 2;
         return 3;
     }
 

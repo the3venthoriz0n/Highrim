@@ -21,7 +21,7 @@
 			"id": "bOverdose:General",
 			"text": "Overdose blackout",
 			"type": "toggle",
-			"help": "Enough same-drug doses make you black out.",
+			"help": "Enough doses of any drug make you black out.",
 			"valueOptions": {
 				"sourceType": "ModSettingBool"
 			}
@@ -52,7 +52,7 @@
 			"id": "iBlackoutDoses:General",
 			"text": "Doses to blackout",
 			"type": "slider",
-			"help": "Same-drug doses in the window.",
+			"help": "Doses of any drug in the window.",
 			"valueOptions": {
 				"min": 2,
 				"max": 8,

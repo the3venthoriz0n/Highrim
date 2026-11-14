@@ -35,6 +35,29 @@ namespace Highrim::Core
     // Screen effect strength: 0.6 at stack 1, rising in equal steps to 1.0 at stack 1 + kMaxStackLevel.
     double StrengthForStack(int stack);
 
+    // Combined counter for the blackout: doses of ANY drug inside the window of the previous dose of any drug.
+    // Same rules as AddStackedDose (window below 1, clock going backwards or a non-finite time restarts at 1).
+    struct DoseTotals
+    {
+        int    count{ 0 };
+        double lastHours{ -1 };
+    };
+    int AddAnyDose(DoseTotals& t, double nowHours, int windowMinutes);
+
+    // Velvet Haze screen effect strength: kVelvetStrengthBase at stack 1, plus kVelvetStrengthStep per extra stack, capped at 1.
+    inline constexpr double kVelvetStrengthBase = 0.5;
+    inline constexpr double kVelvetStrengthStep = 0.2;
+    double StrengthForVelvetStack(int stack);
+
+    // Addiction tuning, all in one place.
+    inline constexpr float  kDoseAmount           = 30.f;  // level added per dose
+    inline constexpr float  kMaxLevel             = 100.f;
+    inline constexpr double kDecayPerDay          = 5.0;   // level lost per game day
+    inline constexpr double kWithdrawalGraceHours = 4.0;   // no withdrawal this soon after the drug's last dose
+    inline constexpr float  kTier1Level           = 10.f;  // tier 1 from here, tier 0 below
+    inline constexpr float  kTier2Level           = 35.f;
+    inline constexpr float  kTier3Level           = 60.f;
+
     struct Addiction
     {
         float  level[3]{};                      // 0 to 100
@@ -137,6 +160,9 @@ namespace Highrim::Core
     // Overdose deferral: a due overdose waits while a menu is open or the game is paused, and is dropped after
     // kOverdoseGiveUpSeconds of real time of waiting (counted from the due time). Non-finite times drop it.
     inline constexpr double kOverdoseGiveUpSeconds = 30.0;
+    // A dose-triggered blackout knocks the player down first and starts the blackout this long after the knock.
+    inline constexpr double kRagdollFirstSeconds = 2.5;
+    inline double BlackoutStartAfterKnock(double knockSeconds) { return knockSeconds + kRagdollFirstSeconds; }
     enum class OverdoseAction { kWait, kRun, kDrop };
     OverdoseAction DecideOverdose(double nowSeconds, double dueSeconds, bool uiBlocked);
 

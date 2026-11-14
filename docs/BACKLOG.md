@@ -1,0 +1,8 @@
+# Highrim backlog (owner's notes for later)
+
+Not built yet. Each item says what the owner asked for and, where known, how it could be done.
+
+1. **Rimerush: no Alchemy or Enchanting boost.** Rimerush's +10 (and the +5 per stack level) goes to 16 skills, not all 18: leave Alchemy and Enchanting out of the potion and the stack abilities (the withdrawal penalty stays on all skills unless the owner says otherwise). Generator change in `tools/make_esp.py` (skill list for the Rimerush buffs), plus the `All Skills Boosted` description and tests.
+2. **Condense every drug description** so the item tooltip and Active Effects read well on the menus: shorter names and one short sentence per effect, fewer visible lines (the Rimerush potion already shows 5 lines; apply the same pass to Velvet Haze, Dreamcap, comedown, withdrawal, Addicted, Overdose Risk, Lost Gear, and the stack abilities).
+3. **Red negative portion on the bars** when health, magicka or stamina are being reduced (like Survival Mode: the part of the bar that is lost shows red). Likely approach, unverified: use the vanilla Ravage-style effects (they reduce the maximum and the HUD shows the reduced part in red) instead of, or as well as, the current direct drain of the current value in `src/Withdrawal.cpp`; check how Survival Mode itself does it in `Skyrim.esm` / the CC survival plugin before choosing.
+4. **Rimerush: faster attack speed.** Add a weapon speed boost (the Weapon Speed Multiplier actor value, for example +20%) to the Rimerush potion and its stack levels, as a visible line with a description; pick the value after a test and keep it a named constant.

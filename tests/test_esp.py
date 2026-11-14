@@ -50,7 +50,9 @@ EXPECTED_EDIDS = {
         "HighrimAbLostGear",
         "HighrimFxHighlyAddictive", "HighrimFxVelvetHealRate", "HighrimFxVelvetCarry", "HighrimAbHealRateUp",
         "HighrimAbCarryUp", "HighrimAbAddicted", "HighrimAbShakySpeech", "HighrimAbShakySneak",
-    ] + ["HighrimAbSkill" + name for name in SKILL_NAMES],
+        "HighrimFxRushHealth", "HighrimFxRushMagicka", "HighrimAbHealthUp", "HighrimAbMagickaUp",
+    ] + ["HighrimFxRushSkill" + name for name in SKILL_NAMES] + ["HighrimAbRushSkill" + name for name in SKILL_NAMES]
+    + ["HighrimAbSkill" + name for name in SKILL_NAMES],
     "SPEL": [
         "HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
         "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3",
@@ -562,7 +564,8 @@ class EspTests(unittest.TestCase):
     def test_potion_base_magnitudes_were_raised(self):
         def mags(edid):
             return [struct.unpack("<f", e[:4])[0] for e in self.edid[edid].get("EFIT")]
-        self.assertEqual(mags("HighrimRimerush"), [34.0, 68.0, 135.0, 0.0])  # plus the highly addictive descriptor
+        # Task 15: Rimerush is +10 Health, Magicka, Stamina and 18 skills, plus the highly addictive descriptor
+        self.assertEqual(mags("HighrimRimerush"), [10.0] * 21 + [0.0])
         self.assertEqual(mags("HighrimVelvetHaze"), [27.0, 500.0, 150.0, 0.0, 0.0])  # slow, regen, carry, invisible, descriptor
 
     # --- Task 14 -----------------------------------------------------------------------------
@@ -597,7 +600,7 @@ class EspTests(unittest.TestCase):
     def test_shaky_and_suspicious_zeroes_speech_and_sneak(self):
         spell = self.edid["HighrimShaky"]
         self.assertEqual(spell.first("FULL"), b"Shaky and Suspicious" + bytes(1))
-        self.assertEqual(spell.first("DESC"), b"Speech and Sneak are 0 while you are high." + bytes(1))
+        self.assertEqual(spell.first("DESC"), b"Speech and Sneak are 0 while you are high on Velvet Haze or Dreamcap." + bytes(1))
         self.assertEqual(struct.unpack_from("<I", spell.first("SPIT"), 8)[0], 4, "ability")
         fx = self.effects_of("HighrimShaky")
         self.assertEqual(len(fx), 2)
@@ -607,6 +610,44 @@ class EspTests(unittest.TestCase):
         for _, (mag, area, dur) in fx:
             self.assertLessEqual(mag, -999)
             self.assertEqual(dur, 0)
+
+    def test_rimerush_potion_buffs_bars_and_all_skills(self):
+        by_id = {r.formid: r for r in self.plugin.records}
+        fx = self.effects_of("HighrimRimerush")
+        self.assertEqual(len(fx), 22)
+        self.assertEqual(len({f for f, _ in fx}), 22, "each effect once")
+        avs = {}
+        for f, (mag, area, dur) in fx[:-1]:
+            data = by_id[f].first("DATA")
+            self.assertEqual(struct.unpack_from("<I", data, 64)[0], 34, "value modifier")
+            self.assertEqual((mag, dur), (10.0, 120))
+            self.assertTrue(by_id[f].first("FULL").strip(bytes(1)) and by_id[f].first("DNAM").strip(bytes(1)))
+            avs[struct.unpack_from("<I", data, 68)[0]] = by_id[f].edid
+        self.assertEqual(set(avs), {24, 25, 26} | set(range(6, 24)), "Health, Magicka, Stamina and all 18 skills (Speech 17 too)")
+        self.assertEqual(self.effects_of("HighrimRimerush")[-1][0], self.edid["HighrimFxHighlyAddictive"].formid)
+        old = {self.edid[e].formid for e in ("HighrimFxRimerushSpeed", "HighrimFxRimerushRegen")}
+        self.assertFalse(old & {f for f, _ in fx}, "movement speed and regen are gone from the potion")
+        for e in ("HighrimFxRimerushSpeed", "HighrimFxRimerushRegen", "HighrimAbSpeedUp", "HighrimAbRegenUp"):
+            self.assertIn(e, self.edid, "pinned record stays")
+
+    def test_rimerush_stack_levels_are_5_per_level_on_bars_and_all_skills(self):
+        by_id = {r.formid: r for r in self.plugin.records}
+        for n in (1, 2, 3):
+            fx = self.effects_of(f"HighrimStackRimerush{n}")
+            self.assertEqual(len(fx), 21)
+            avs = set()
+            for f, (mag, area, dur) in fx:
+                self.assertEqual((mag, dur), (5.0 * n, 0))
+                avs.add(struct.unpack_from("<I", by_id[f].first("DATA"), 68)[0])
+            self.assertEqual(avs, {24, 25, 26} | set(range(6, 24)))
+            desc = self.edid[f"HighrimStackRimerush{n}"].first("DESC").decode("ascii")
+            self.assertIn(f"All skills are increased by {5 * n}.", desc)
+
+    def test_shaky_is_not_on_the_rimerush_potion_and_still_on_the_others(self):
+        # The plugin (Core::IsShakyHigh) decides when the ability is applied; the potions carry nothing of it.
+        shaky = {self.edid["HighrimAbShakySpeech"].formid, self.edid["HighrimAbShakySneak"].formid}
+        for edid in EXPECTED_EDIDS["ALCH"]:
+            self.assertFalse(shaky & {f for f, _ in self.effects_of(edid)})
 
     def test_addicted_abilities(self):
         for key, name in (("Rimerush", "Rimerush"), ("VelvetHaze", "Velvet Haze"), ("Dreamcap", "Dreamcap")):

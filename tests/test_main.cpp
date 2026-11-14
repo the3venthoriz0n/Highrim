@@ -418,7 +418,71 @@ namespace
             CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|-1").has_value());
             CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|nan").has_value());
             CHECK(!DeserializeState("HS1|" + Serialize(p.addiction) + "|1|2").has_value());
+            // Version 1 (no Lost Gear fields) still loads, as "no reminder".
+            auto v1 = DeserializeState("HS1|" + Serialize(p.addiction) + "|55.5");
+            CHECK(v1.has_value() && v1->hangoverExpiryHours == 55.5 && v1->lostGearHold == -1 && v1->lostGearExpiryHours == 0.0);
+            // Version 2 carries the reminder.
+            p.lostGearHold = 4; p.lostGearExpiryHours = 1234.5;
+            auto v2 = DeserializeState(SerializeState(p));
+            CHECK(v2.has_value() && v2->lostGearHold == 4 && v2->lostGearExpiryHours == 1234.5 && v2->hangoverExpiryHours == p.hangoverExpiryHours);
+            CHECK(SerializeState(p).starts_with("HS2|"));
+            p.lostGearHold = -1; p.lostGearExpiryHours = 0.0;
+            CHECK(DeserializeState(SerializeState(p))->lostGearHold == -1);
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1|2").has_value());          // too few fields
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1|2|3|4").has_value());      // too many
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1|-2|3").has_value());       // hold below -1
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1|100|3").has_value());      // hold out of range
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1|2|-3").has_value());       // negative expiry
+            CHECK(!DeserializeState("HS2|" + Serialize(p.addiction) + "|1|2|nan").has_value());
         }
+
+        // Comedown visual strength: 0.5 + 0.15 per stack, capped at 1.0.
+        CHECK(std::fabs(StrengthForComedown(1) - 0.65) < 1e-9);
+        CHECK(std::fabs(StrengthForComedown(2) - 0.80) < 1e-9);
+        CHECK(std::fabs(StrengthForComedown(3) - 0.95) < 1e-9);
+        CHECK(StrengthForComedown(4) == 1.0);
+        CHECK(StrengthForComedown(99) == 1.0);
+        CHECK(std::fabs(StrengthForComedown(0) - 0.65) < 1e-9);   // below 1 counts as 1
+        CHECK(std::fabs(StrengthForComedown(-5) - 0.65) < 1e-9);
+
+        // Messages.
+        CHECK(ComedownMessage(DrugType::kStimulant) == "Rimerush wears off: stamina regenerates 60% slower for 60 s.");
+        CHECK(ComedownMessage(DrugType::kDepressant).starts_with("Velvet Haze wears off"));
+        CHECK(ComedownMessage(DrugType::kHallucinogen).starts_with("Dreamcap wears off"));
+        CHECK(WithdrawalMessage(1).starts_with("Withdrawal I: "));
+        CHECK(WithdrawalMessage(2).starts_with("Withdrawal II: "));
+        CHECK(WithdrawalMessage(3).starts_with("Withdrawal III: "));
+        CHECK(WithdrawalMessage(0) == "Withdrawal is over.");
+        CHECK(LostGearMessage("Eastmarch") == "You wake up with a splitting headache. Your things are in the Eastmarch prison.");
+
+        // Did the teleport work? (compared after the settle delay)
+        CHECK(kMoveSettleSeconds > 0.0 && kMoveMinUnits == 1000.0f);
+        {
+            const Point3 a{ 130992, 36118, -12271 };
+            CHECK(!DidMove(a, a));                                   // the log's before == after: not moved
+            CHECK(!DidMove(a, { 130992 + 999.0f, 36118, -12271 }));  // just under 1000
+            CHECK(DidMove(a, { 130992 + 1000.0f, 36118, -12271 }));  // exactly 1000 counts
+            CHECK(DidMove(a, { 0, 0, 0 }));
+            CHECK(DidMove({ 0, 0, 0 }, { 600, 600, 600 }));          // 3D distance 1039
+            CHECK(!DidMove(a, { std::numeric_limits<float>::quiet_NaN(), 0, 0 }));
+            CHECK(!DidMove(a, { std::numeric_limits<float>::infinity(), 0, 0 }));
+            const Point3 target{ 5000, 5000, 0 };
+            CHECK(CheckMove(a, target, a) == MoveVerdict::kNotMoved);
+            CHECK(CheckMove(a, target, target) == MoveVerdict::kMoved);
+            CHECK(CheckMove(a, { a.x + 10, a.y, a.z }, a) == MoveVerdict::kNotApplicable);  // target next to the player
+            CHECK(CheckMove(a, { a.x + 999, a.y, a.z }, a) == MoveVerdict::kNotApplicable);
+            CHECK(CheckMove(a, { a.x + 1000, a.y, a.z }, a) == MoveVerdict::kNotMoved);
+        }
+
+        // Detect life recast and Lost Gear expiry.
+        CHECK(kDetectLifeRecastSeconds == 55.0);
+        CHECK(kLostGearHours == 72.0);
+        CHECK(!LostGearExpired(100.0, 172.0));
+        CHECK(LostGearExpired(172.0, 172.0));
+        CHECK(LostGearExpired(200.0, 172.0));
+        CHECK(LostGearExpired(100.0, 0.0));                                         // no expiry recorded
+        CHECK(LostGearExpired(100.0, std::numeric_limits<double>::quiet_NaN()));
+        CHECK(!LostGearExpired(std::numeric_limits<double>::quiet_NaN(), 172.0));  // unknown clock: keep it
 
         // Dose diagnostics: two log passes per dose (0.5 s and 5 s), each taken once.
         {

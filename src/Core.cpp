@@ -180,25 +180,103 @@ namespace Highrim::Core
 
     std::string SerializeState(const PersistedState& s)
     {
-        std::string out = "HS1|" + Serialize(s.addiction) + "|";
+        std::string out = "HS2|" + Serialize(s.addiction) + "|";
         Append(out, s.hangoverExpiryHours);
+        out += "|";
+        Append(out, s.lostGearHold);
+        out += "|";
+        Append(out, s.lostGearExpiryHours);
         return out;
     }
 
     std::optional<PersistedState> DeserializeState(std::string_view text)
     {
-        constexpr std::string_view kTag = "HS1|";
-        if (!text.starts_with(kTag)) return std::nullopt;
-        text.remove_prefix(kTag.size());
+        constexpr std::string_view kTag1 = "HS1|";
+        constexpr std::string_view kTag2 = "HS2|";
+        const bool v2 = text.starts_with(kTag2);
+        if (!v2 && !text.starts_with(kTag1)) return std::nullopt;
+        text.remove_prefix(kTag1.size());
         const auto sep = text.find('|');
         if (sep == std::string_view::npos) return std::nullopt;
         auto addiction = Deserialize(text.substr(0, sep));
         if (!addiction) return std::nullopt;
         PersistedState p{};
-        p.addiction = *addiction;
-        if (!ParseNumber(text.substr(sep + 1), p.hangoverExpiryHours)) return std::nullopt;
-        if (p.hangoverExpiryHours < 0.0) return std::nullopt;
+        p.addiction                  = *addiction;
+        const std::string_view rest = text.substr(sep + 1);
+        if (!v2) {
+            if (!ParseNumber(rest, p.hangoverExpiryHours)) return std::nullopt;
+            if (p.hangoverExpiryHours < 0.0) return std::nullopt;
+            return p;
+        }
+        const auto s1 = rest.find('|');
+        if (s1 == std::string_view::npos) return std::nullopt;
+        const auto s2 = rest.find('|', s1 + 1);
+        if (s2 == std::string_view::npos) return std::nullopt;
+        if (!ParseNumber(rest.substr(0, s1), p.hangoverExpiryHours) || p.hangoverExpiryHours < 0.0) return std::nullopt;
+        if (!ParseNumber(rest.substr(s1 + 1, s2 - s1 - 1), p.lostGearHold) || p.lostGearHold < -1 || p.lostGearHold > 99) return std::nullopt;
+        if (!ParseNumber(rest.substr(s2 + 1), p.lostGearExpiryHours) || p.lostGearExpiryHours < 0.0) return std::nullopt;
         return p;
+    }
+
+    double StrengthForComedown(int stack)
+    {
+        const int n = std::max(1, stack);
+        return std::min(1.0, 0.5 + 0.15 * static_cast<double>(n));
+    }
+
+    std::string ComedownMessage(DrugType type)
+    {
+        switch (type) {
+        case DrugType::kStimulant: return "Rimerush wears off: stamina regenerates 60% slower for 60 s.";
+        case DrugType::kDepressant: return "Velvet Haze wears off: stamina regenerates 40% slower for 60 s.";
+        default: return "Dreamcap wears off: your vision swims for 60 s.";
+        }
+    }
+
+    std::string WithdrawalMessage(int tier)
+    {
+        switch (tier) {
+        case 1: return "Withdrawal I: Cravings. Stamina regenerates 20% slower.";
+        case 2: return "Withdrawal II: Shakes. Stamina regenerates 35% slower and maximum stamina is 25 points lower.";
+        case 3: return "Withdrawal III: Sickness. Stamina regenerates 50% slower, maximum stamina is 40 points lower and health regenerates 50% slower.";
+        default: return "Withdrawal is over.";
+        }
+    }
+
+    std::string LostGearMessage(std::string_view hold)
+    {
+        return "You wake up with a splitting headache. Your things are in the " + std::string(hold) + " prison.";
+    }
+
+    namespace
+    {
+        double Distance3(Point3 a, Point3 b)
+        {
+            const double dx = static_cast<double>(b.x) - a.x;
+            const double dy = static_cast<double>(b.y) - a.y;
+            const double dz = static_cast<double>(b.z) - a.z;
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+
+    bool DidMove(Point3 before, Point3 after, float minUnits)
+    {
+        const double d = Distance3(before, after);
+        return std::isfinite(d) && d >= static_cast<double>(minUnits);
+    }
+
+    MoveVerdict CheckMove(Point3 before, Point3 target, Point3 after, float minUnits)
+    {
+        const double d = Distance3(before, target);
+        if (std::isfinite(d) && d < static_cast<double>(minUnits)) return MoveVerdict::kNotApplicable;
+        return DidMove(before, after, minUnits) ? MoveVerdict::kMoved : MoveVerdict::kNotMoved;
+    }
+
+    bool LostGearExpired(double nowHours, double expiryHours)
+    {
+        if (!std::isfinite(expiryHours) || expiryHours <= 0.0) return true;
+        if (!std::isfinite(nowHours)) return false;
+        return nowHours >= expiryHours;
     }
 
     void ScheduleDiagnostics(DiagnosticTimers& t, DrugType type, double nowSeconds)

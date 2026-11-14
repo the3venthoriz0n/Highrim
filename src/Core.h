@@ -78,14 +78,47 @@ namespace Highrim::Core
     // Maps the local form id of one of the three drugs to its type; anything else -> nullopt.
     std::optional<DrugType> DrugFromLocalId(std::uint32_t localId);
 
-    // What the co-save keeps: addiction state plus the game hour at which the hangover ends (0 = none).
+    // What the co-save keeps: addiction state, the game hour at which the hangover ends (0 = none), and the "Lost Gear"
+    // reminder: which hold's prison holds the player's things (index into the hold table, -1 = none) and the game
+    // hour at which the reminder ends. Version 1 records ("HS1") have no Lost Gear fields and load as "none".
     struct PersistedState
     {
         Addiction addiction;
         double    hangoverExpiryHours{ 0 };
+        int       lostGearHold{ -1 };
+        double    lostGearExpiryHours{ 0 };
     };
     std::string                   SerializeState(const PersistedState& s);
     std::optional<PersistedState> DeserializeState(std::string_view text);  // strict; malformed -> nullopt
+
+    // Comedown screen effect (black and white, no blur): strength 0.5 + 0.15 per stack, at most 1.0 (a stack below 1
+    // counts as 1). It runs for kComedownVisualSeconds, the length of the comedown.
+    inline constexpr double kComedownVisualSeconds = 60.0;
+    double                  StrengthForComedown(int stack);
+
+    // HUD texts for the end of a high and for a withdrawal tier (0 = withdrawal over). Same numbers as the plugin's
+    // spell descriptions (tools/make_esp.py).
+    std::string ComedownMessage(DrugType type);
+    std::string WithdrawalMessage(int tier);
+    std::string LostGearMessage(std::string_view hold);  // shown after waking up
+
+    // Did a teleport work? The blackout moves the player with MoveTo, which the engine applies a moment later, so the
+    // position is only compared after kMoveSettleSeconds (still black). kNotApplicable: the target was already
+    // within kMoveMinUnits of where the player stood, so the position cannot tell (nothing is rolled back for it).
+    inline constexpr float  kMoveMinUnits      = 1000.0f;
+    inline constexpr double kMoveSettleSeconds = 1.5;
+    struct Point3 { float x, y, z; };
+    enum class MoveVerdict { kMoved, kNotMoved, kNotApplicable };
+    bool        DidMove(Point3 before, Point3 after, float minUnits = kMoveMinUnits);  // distance >= minUnits; non-finite -> false
+    MoveVerdict CheckMove(Point3 before, Point3 target, Point3 after, float minUnits = kMoveMinUnits);
+
+    // Dreamcap's reveal life: the plugin casts vanilla Detect Life when a dose is counted and again this often while
+    // the high lasts.
+    inline constexpr double kDetectLifeRecastSeconds = 55.0;
+
+    // Lost Gear reminder: lasts this many game hours (3 game days) unless the player reaches the prison first.
+    inline constexpr double kLostGearHours = 72.0;
+    bool                    LostGearExpired(double nowHours, double expiryHours);  // expiry <= 0 or non-finite counts as expired
 
     // Comedown scheduling in real seconds: due kComedownDelaySeconds after the drug's last dose.
     inline constexpr double kComedownDelaySeconds = 120.0;

@@ -35,16 +35,18 @@ EXPECTED_EDIDS = {
         "HighrimFxDetectLife",
         "HighrimAbRegenDown", "HighrimAbStaminaDown", "HighrimAbHealRateDown",
         "HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbResistUp", "HighrimAbSlow",
+        "HighrimAbLostGear",
     ],
     "SPEL": [
         "HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
         "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3",
         "HighrimHangover", "HighrimBlurPulse",
-    ] + [f"HighrimStack{drug}{n}" for drug in ("Rimerush", "VelvetHaze", "Dreamcap") for n in (1, 2, 3)],
+    ] + [f"HighrimStack{drug}{n}" for drug in ("Rimerush", "VelvetHaze", "Dreamcap") for n in (1, 2, 3)]
+    + ["HighrimLostGear" + hold for hold in HOLDS],
     "BOOK": ["HighrimNote" + hold for hold in HOLDS],
     "ALCH": ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"],
     "COBJ": ["HighrimRecipeRimerush", "HighrimRecipeVelvetHaze", "HighrimRecipeDreamcap"],
-    "IMAD": ["HighrimImodVelvet"],
+    "IMAD": ["HighrimImodVelvet", "HighrimImodComedown"],
     "QUST": ["Highrim_MCM"],
 }
 ALL_EDIDS = {edid for group in EXPECTED_EDIDS.values() for edid in group}
@@ -52,11 +54,11 @@ ALL_EDIDS = {edid for group in EXPECTED_EDIDS.values() for edid in group}
 COOKPOT = 0x000A5CB3
 GIANT_LICHEN, GLOWING_MUSHROOM, LAVENDER, HANGING_MOSS, SWAMP_FUNGAL_POD = (
     0x0007E8C1, 0x0007EE01, 0x00045C28, 0x00057F91, 0x0007E8B7)
-CONFIRMED_INGREDIENTS = {GIANT_LICHEN, GLOWING_MUSHROOM, LAVENDER, HANGING_MOSS, SWAMP_FUNGAL_POD}
-RECIPES = {
-    "HighrimRecipeRimerush": ("HighrimRimerush", [(GIANT_LICHEN, 2), (GLOWING_MUSHROOM, 1)]),
-    "HighrimRecipeVelvetHaze": ("HighrimVelvetHaze", [(LAVENDER, 2), (HANGING_MOSS, 1)]),
-    "HighrimRecipeDreamcap": ("HighrimDreamcap", [(GLOWING_MUSHROOM, 2), (SWAMP_FUNGAL_POD, 1)]),
+GOLD001 = 0x0000000F
+RECIPES = {  # every recipe: 1000 gold and nothing else
+    "HighrimRecipeRimerush": ("HighrimRimerush", [(GOLD001, 1000)]),
+    "HighrimRecipeVelvetHaze": ("HighrimVelvetHaze", [(GOLD001, 1000)]),
+    "HighrimRecipeDreamcap": ("HighrimDreamcap", [(GOLD001, 1000)]),
 }
 # The MCM quest record exactly as the old make_mcm_plugin.py wrote it (header and data), by SHA-256.
 MCM_QUEST_RECORD_SHA256 = "c7ad8cacab853ba98ec7e5fabd447a8a7d545c06b321dcfe06a42bce3746733a"
@@ -358,9 +360,7 @@ class EspTests(unittest.TestCase):
             self.assertEqual(struct.unpack("<H", cobj.first("NAM1"))[0], 1)
             self.assertEqual([struct.unpack("<II", c) for c in cnto], ingredients)
             self.assertFalse(cobj.get("CTDA"), "recipes carry no conditions")
-            for item, count in ingredients:
-                self.assertIn(item, CONFIRMED_INGREDIENTS)
-                self.assertGreater(count, 0)
+            self.assertEqual(ingredients, [(GOLD001, 1000)], "exactly 1000 gold, no other ingredient")
 
     # --- ALCH / keyword ---------------------------------------------------------
     def test_drugs_carry_the_dealer_keyword_and_effects(self):
@@ -372,7 +372,7 @@ class EspTests(unittest.TestCase):
             self.assertIn(keyword, kwda)
             efid, efit = alch.get("EFID"), alch.get("EFIT")
             self.assertEqual(len(efid), len(efit))
-            self.assertGreaterEqual(len(efid), 2)
+            self.assertGreaterEqual(len(efid), 1)
             for raw in efit:
                 magnitude, area, duration = struct.unpack("<fII", raw)
                 self.assertEqual(duration, 120, "high lasts 120 s")
@@ -380,17 +380,16 @@ class EspTests(unittest.TestCase):
             self.assertEqual(len(enit), 20)
             self.assertTrue(alch.first("FULL").endswith(b"\0"))
 
-    def test_dreamcap_has_one_unconditional_detect_life_effect(self):
+    def test_dreamcap_potion_has_no_detect_life_effect(self):
+        # Reveal life is cast by the plugin (vanilla Detect Life); potion effects never applied it. The pinned-by-use
+        # MGEF record stays in the plugin but no potion lists it.
         dreamcap = self.edid["HighrimDreamcap"]
         fx = self.edid["HighrimFxDetectLife"]
-        self.assertTrue(fx.first("DNAM").strip(bytes(1)), "carries the description text")
-        self.assertEqual(struct.unpack_from("<I", fx.first("DATA"), 64)[0], 19, "Detect Life archetype")
-        self.assertEqual(fx.get("CTDA"), [], "no MGEF conditions: nothing that can differ by player")
         efids = [struct.unpack("<I", raw)[0] for raw in dreamcap.get("EFID")]
-        self.assertEqual(efids[1:], [fx.formid], "one Detect Life effect, used once (plus the sleeping tree effect)")
-        self.assertEqual(dreamcap.get("CTDA"), [], "no per-effect conditions (hostility / interior)")
-        area = struct.unpack("<fII", dreamcap.get("EFIT")[1])[1]
-        self.assertGreaterEqual(area, 100)
+        self.assertEqual(len(efids), 1, "only the sleeping tree vision effect")
+        self.assertNotIn(fx.formid, efids)
+        for edid in EXPECTED_EDIDS["ALCH"]:
+            self.assertNotIn(fx.formid, [struct.unpack("<I", r)[0] for r in self.edid[edid].get("EFID")])
 
     def test_every_custom_effect_and_spell_has_a_description(self):
         for record in self.plugin.by_type("MGEF"):
@@ -400,6 +399,49 @@ class EspTests(unittest.TestCase):
             self.assertGreater(len(text), len(record.first("FULL").strip(bytes(1))), f"{record.edid} description is just its name")
             self.assertNotIn("<", text, f"{record.edid}: tokens must be filled in")
         self.assertIn(b"60", self.edid["HighrimComedownRimerush"].first("DESC"))
+
+    def test_comedown_withdrawal_hangover_names_and_descriptions(self):
+        def text(edid, tag):
+            return self.edid[edid].first(tag).rstrip(bytes(1)).decode("ascii")
+        names = {"HighrimComedownRimerush": "Rimerush Crash", "HighrimComedownVelvetHaze": "Velvet Haze Crash",
+                 "HighrimComedownDreamcap": "Dreamcap Crash", "HighrimWithdrawal1": "Withdrawal I: Cravings",
+                 "HighrimWithdrawal2": "Withdrawal II: Shakes", "HighrimWithdrawal3": "Withdrawal III: Sickness",
+                 "HighrimHangover": "Hangover"}
+        for edid, name in names.items():
+            self.assertEqual(text(edid, "FULL"), name)
+        self.assertEqual(text("HighrimComedownRimerush", "DESC"), "Stamina regenerates 60% slower for 60 seconds.")
+        self.assertEqual(text("HighrimComedownVelvetHaze", "DESC"), "Stamina regenerates 40% slower for 60 seconds.")
+        self.assertEqual(text("HighrimWithdrawal1", "DESC"), "Stamina regenerates 20% slower.")
+        self.assertIn("25 points lower", text("HighrimWithdrawal2", "DESC"))
+        self.assertIn("Health regenerates 50% slower", text("HighrimWithdrawal3", "DESC"))
+        self.assertIn("Lasts one game day", text("HighrimHangover", "DESC"))
+        for edid in names:
+            self.assertNotIn("-", text(edid, "DESC").replace("Withdrawal", ""), f"{edid}: no raw negative numbers")
+
+    def test_lost_gear_abilities(self):
+        for hold in HOLDS:
+            spell = self.edid["HighrimLostGear" + hold]
+            self.assertEqual(spell.first("FULL"), f"Lost Gear: {hold} Prison".encode("ascii") + b"\0")
+            self.assertEqual(spell.first("DESC"), f"Your things are in the {hold} prison.".encode("ascii") + b"\0")
+            self.assertEqual(struct.unpack_from("<I", spell.first("SPIT"), 8)[0], 4, "ability")
+            self.assertEqual(len(spell.get("EFID")), 1)
+
+    def test_comedown_imad_is_black_and_white_without_blur(self):
+        mine = self.edid["HighrimImodComedown"]
+        vanilla = read_template_imad()
+        self.assertEqual(mine.type, "IMAD")
+        for tag in ("BNAM", "VNAM", "RNAM", "SNAM", "UNAM", "NAM1", "NAM2", "WNAM", "XNAM", "YNAM", "NAM4"):
+            data = mine.first(tag)
+            floats = struct.unpack(f"<{len(data) // 4}f", data)
+            self.assertTrue(all(v == 0.0 for v in floats[1::2]), f"{tag} has blur left")
+        for tag in ("TNAM", "NAM3"):
+            floats = struct.unpack("<25f", mine.first(tag))
+            self.assertTrue(all(v == 0.0 for v in floats[4::5]), f"{tag} still tints")
+        for tag in ("\x11IAD", "QIAD"):
+            data = mine.first(tag)
+            self.assertTrue(all(v == 0.0 for v in struct.unpack(f"<{len(data) // 4}f", data)[1::2]), "saturation not zero")
+            self.assertEqual(len(data), len(vanilla[tag]))
+        self.assertAlmostEqual(struct.unpack_from("<f", mine.first("DNAM"), 4)[0], 60.0)
 
     def test_detrimental_effects_are_not_flagged_hostile_or_detrimental(self):
         # Cure Disease and other dispels: our comedown, withdrawal and hangover effects carry no Hostile (0x1) or
@@ -551,7 +593,9 @@ class EspTests(unittest.TestCase):
                     if formid >> 24 != 0:
                         continue
                     self.assertIn(formid, vanilla, f"{record.edid} {tag} {formid:08X} not in Skyrim.esm")
-                    if expectations[tag]:
+                    if tag == "CNTO":
+                        self.assertEqual(vanilla[formid], "MISC", f"{record.edid} {tag} {formid:08X} (gold)")
+                    elif expectations[tag]:
                         self.assertEqual(vanilla[formid], expectations[tag], f"{record.edid} {tag} {formid:08X}")
                     seen += 1
         self.assertGreater(seen, 20)

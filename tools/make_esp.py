@@ -12,7 +12,7 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
   KYWD  HighrimDrug                                 keyword on all three drugs (for the later dealer feature)
   MGEF  HighrimFxRimerushSpeed / Stamina / Regen    Rimerush effects (clones of potion effects)
         HighrimFxVelvetResist / VelvetSlow          Velvet Haze effects
-        HighrimFxDetectLife                         one Detect Life effect with no conditions (works for every player)
+        HighrimFxDetectLife                         one Detect Life effect with no conditions (no longer on Dreamcap: the plugin casts vanilla Detect Life itself; kept because its ID is in use)
         HighrimFxRegenDown                          stamina regen change, shared by comedowns (non-detrimental clone, negative magnitude)
         HighrimAbRegenDown / AbStaminaDown / AbHealRateDown   constant-effect clones for withdrawal/hangover
         HighrimAbSpeedUp / AbStaminaUp / AbRegenUp / AbResistUp / AbSlow   constant-effect clones for the dose stacks
@@ -21,7 +21,10 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
         HighrimHangover                             ability the plugin adds after a blackout and removes after a game day
         HighrimStack<Rimerush|VelvetHaze|Dreamcap>1..3   dose stack abilities (type Ability), one at a time per drug
         HighrimBlurPulse                            8 s blur the plugin casts now and then (withdrawal tier 2, hangover)
+        HighrimLostGear<Hold>                       nine abilities (one per hold) that say where the player's things are
+        HighrimAbLostGear                           the (harmless) effect those abilities carry
   IMAD  HighrimImodVelvet                           Velvet Haze screen effect: ParalyzeMassImod with the blur tracks zeroed
+        HighrimImodComedown                         black-and-white comedown look: the same record, no blur, no tint, saturation 0, 60 s
   BOOK  HighrimNote<Hold>                           nine notes: Whiterun Eastmarch Rift Haafingar Hjaalmarch Reach
                                                     Falkreath Pale Winterhold
   ALCH  HighrimRimerush / HighrimVelvetHaze / HighrimDreamcap
@@ -72,7 +75,13 @@ DRUGGED_EFFECT = 0x000E3CBB   # dunSleepingTreeDruggedAlch: the sleeping tree sa
 # dwarven, NoDetectLife, IsUndead). A condition that fails for one player but not another means no detection for that
 # player, so none are kept: one effect, one area, same for everybody. Undead, daedra and constructs now show too.
 DETECT_LIFE_AREA = 150
-DETECT_LIFE_TEXT = "Living creatures and people are visible through walls within <area> feet for <dur> seconds."
+DETECT_LIFE_TEXT = ("Living creatures and people are visible through walls within <area> feet for <dur> seconds. "
+                    "(Not on the Dreamcap potion any more: the plugin casts the vanilla Detect Life spell instead.)")
+GOLD = 0x0000000F             # Gold001
+RECIPE_GOLD = 1000            # every cooking pot recipe costs exactly this much gold and nothing else
+IMAD_COMEDOWN = "HighrimImodComedown"
+COMEDOWN_IMOD_SECONDS = 60.0  # duration written into the comedown IMAD (the plugin also stops it by itself)
+ACTOR_VALUE_CARRY_WEIGHT = 32
 
 # Template form IDs (see tools/extract_templates.py).
 T_FORT_STAMINA, T_FORT_STAMINA_RATE, T_SAP_SLOW = "0003EAF9", "0003EB08", "000E3CBA"
@@ -124,7 +133,21 @@ MGEFS = [
      {"av": ACTOR_VALUE_DAMAGE_RESIST}),
     ("HighrimAbSlow", "Dragging Limbs", "Movement speed is changed by <mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_SPEED_MULT}),
+    # The effect the Lost Gear abilities carry. An ability needs at least one effect to appear in Active Effects, so
+    # it is +1 carry weight (harmless); the spell's own description is what tells the player where the gear is.
+    ("HighrimAbLostGear", "Lost Gear", "Carry weight is increased by <mag>.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_CARRY_WEIGHT}),
 ]
+
+# Plain-words text for the spell descriptions of effects whose magnitude is negative (<neg> is the absolute value).
+# The effect's own text (above) is what the engine shows for the effect; this is what the spell's tooltip shows.
+PLAIN = {
+    "HighrimFxRegenDown": "Stamina regenerates <neg>% slower for <dur> seconds.",
+    "HighrimAbRegenDown": "Stamina regenerates <neg>% slower.",
+    "HighrimAbStaminaDown": "Maximum stamina is <neg> points lower.",
+    "HighrimAbHealRateDown": "Health regenerates <neg>% slower.",
+    "HighrimAbSlow": "Movement is <neg>% slower.",
+}
 
 
 def fx(edid):
@@ -162,20 +185,31 @@ def stack_spell_defs():
 def spell_defs():
     """(EDID, name, kind, effects) with kind 'ability' or 'spell'."""
     return [
-        ("HighrimComedownRimerush", "Rimerush Comedown", "spell", [effect(fx("HighrimFxRegenDown"), -60, 60)]),
-        ("HighrimComedownVelvetHaze", "Velvet Haze Comedown", "spell", [effect(fx("HighrimFxRegenDown"), -40, 60)]),
-        ("HighrimComedownDreamcap", "Dreamcap Comedown", "spell", [effect(DRUGGED_EFFECT, 0, 60)]),
-        ("HighrimWithdrawal1", "Withdrawal: Cravings", "ability",
+        ("HighrimComedownRimerush", "Rimerush Crash", "spell", [effect(fx("HighrimFxRegenDown"), -60, 60)]),
+        ("HighrimComedownVelvetHaze", "Velvet Haze Crash", "spell", [effect(fx("HighrimFxRegenDown"), -40, 60)]),
+        ("HighrimComedownDreamcap", "Dreamcap Crash", "spell", [effect(DRUGGED_EFFECT, 0, 60)]),
+        ("HighrimWithdrawal1", "Withdrawal I: Cravings", "ability",
          [effect(fx("HighrimAbRegenDown"), -20, 0)]),
-        ("HighrimWithdrawal2", "Withdrawal: Shakes", "ability",
+        ("HighrimWithdrawal2", "Withdrawal II: Shakes", "ability",
          [effect(fx("HighrimAbRegenDown"), -35, 0), effect(fx("HighrimAbStaminaDown"), -25, 0)]),
-        ("HighrimWithdrawal3", "Withdrawal: Sickness", "ability",
+        ("HighrimWithdrawal3", "Withdrawal III: Sickness", "ability",
          [effect(fx("HighrimAbRegenDown"), -50, 0), effect(fx("HighrimAbStaminaDown"), -40, 0),
           effect(fx("HighrimAbHealRateDown"), -50, 0)]),
         ("HighrimHangover", "Hangover", "ability",
          [effect(fx("HighrimAbStaminaDown"), -30, 0), effect(fx("HighrimAbRegenDown"), -25, 0)]),
         ("HighrimBlurPulse", "Blurred Vision", "spell", [effect(DRUGGED_EFFECT, 0, 8)]),
-    ] + stack_spell_defs()
+    ] + stack_spell_defs() + [
+        (f"HighrimLostGear{hold}", f"Lost Gear: {hold} Prison", "ability", [effect(fx("HighrimAbLostGear"), 1, 0)])
+        for hold in HOLDS]
+
+
+# Spell descriptions that say more than the effect texts do (everything else is built from the effects' texts).
+SPELL_EXTRA = {
+    "HighrimWithdrawal2": " Your vision blurs now and then.",
+    "HighrimWithdrawal3": " Your vision blurs now and then.",
+    "HighrimHangover": " Your vision blurs now and then. Lasts one game day.",
+}
+SPELL_TEXT = {f"HighrimLostGear{hold}": f"Your things are in the {hold} prison." for hold in HOLDS}
 
 
 def drug_defs():
@@ -190,27 +224,26 @@ def drug_defs():
          [effect(fx("HighrimFxVelvetResist"), VELVET_BASE["resist"], high),
           effect(fx("HighrimFxVelvetSlow"), VELVET_BASE["slow"], high)]),
         ("HighrimDreamcap", "Dreamcap", 70,
-         [effect(DRUGGED_EFFECT, 0, high)]
-         + [effect(fx("HighrimFxDetectLife"), 0, high, DETECT_LIFE_AREA)]),
+         [effect(DRUGGED_EFFECT, 0, high)]),  # reveal life is cast by the plugin (vanilla Detect Life), not a potion effect
     ]
 
 
-RECIPES = [  # (EDID, product EDID, [(ingredient, count)])
-    ("HighrimRecipeRimerush", "HighrimRimerush", [(GIANT_LICHEN, 2), (GLOWING_MUSHROOM, 1)]),
-    ("HighrimRecipeVelvetHaze", "HighrimVelvetHaze", [(LAVENDER, 2), (HANGING_MOSS, 1)]),
-    ("HighrimRecipeDreamcap", "HighrimDreamcap", [(GLOWING_MUSHROOM, 2), (SWAMP_FUNGAL_POD, 1)]),
+RECIPES = [  # (EDID, product EDID, [(ingredient, count)]): 1000 gold, nothing else (the 0.1.0 plant recipes are gone)
+    ("HighrimRecipeRimerush", "HighrimRimerush", [(GOLD, RECIPE_GOLD)]),
+    ("HighrimRecipeVelvetHaze", "HighrimVelvetHaze", [(GOLD, RECIPE_GOLD)]),
+    ("HighrimRecipeDreamcap", "HighrimDreamcap", [(GOLD, RECIPE_GOLD)]),
 ]
 
 KEYWORD_EDID = "HighrimDrug"
 SPELL_EDIDS = ["HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
                "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover",
-               "HighrimBlurPulse"] + STACK_EDIDS
+               "HighrimBlurPulse"] + STACK_EDIDS + [f"HighrimLostGear{hold}" for hold in HOLDS]
 NOTE_EDIDS = ["HighrimNote" + hold for hold in HOLDS]
 ALCH_EDIDS = ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"]
 COBJ_EDIDS = [r[0] for r in RECIPES]
 # Group order and the order form IDs are handed out in.
 ORDER = [("KYWD", [KEYWORD_EDID]), ("MGEF", [m[0] for m in MGEFS]), ("SPEL", SPELL_EDIDS),
-         ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS), ("IMAD", [IMAD_VELVET])]
+         ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS), ("IMAD", [IMAD_VELVET, IMAD_COMEDOWN])]
 
 PINNED_FILE = os.environ.get("HIGHRIM_PINNED_IDS") or os.path.join(TOOLS, "pinned_form_ids.json")
 
@@ -227,6 +260,9 @@ def allocate_ids():
     with open(PINNED_FILE, encoding="utf-8") as handle:
         data = json.load(handle)
     pins = {name: int(value, 16) for name, value in data["pinned"].items()}
+    # "provisional": IDs handed out after 0.1.0 by earlier development builds of this branch. They are kept as they
+    # are so saves made with those builds still point at the right records; they are not part of the 0.1.0 contract.
+    pins.update({name: int(value, 16) for name, value in data.get("provisional", {}).items()})
     retired = set(data.get("retired", []))
     generated = {name for _, names in ORDER for name in names} | {f"{MOD_NAME}_MCM"}
     missing = sorted(set(pins) - generated - retired)
@@ -332,13 +368,13 @@ def spell_description(effects):
     (The spell's own DESC is what the magic menu and tooltips show, so it must say more than the name.)"""
     texts = {}
     for name, _, description, _, _ in MGEFS:
-        texts[ids[name]] = description
+        texts[ids[name]] = PLAIN.get(name, description)
     texts.update(VANILLA_EFFECT_TEXT)
     parts = []
     for item in effects:
         text = texts.get(item["mgef"], "")
-        text = (text.replace("<mag>", f"{item['mag']:g}").replace("<dur>", str(item["dur"]))
-                .replace("<area>", str(item["area"])))
+        text = (text.replace("<neg>", f"{abs(item['mag']):g}").replace("<mag>", f"{item['mag']:g}")
+                .replace("<dur>", str(item["dur"])).replace("<area>", str(item["area"])))
         text = text.replace(" for 0 seconds", "")
         if text and text not in parts:
             parts.append(text)
@@ -349,7 +385,8 @@ def build_spell(edid, name, kind, effects):
     subs = template(T_ABILITY, "SPEL")
     replace(subs, "EDID", esp.zstr(edid))
     replace(subs, "FULL", esp.zstr(name))
-    replace(subs, "DESC", esp.zstr(spell_description(effects) or name))
+    text = SPELL_TEXT.get(edid) or (spell_description(effects) + SPELL_EXTRA.get(edid, "")) or name
+    replace(subs, "DESC", esp.zstr(text))
     if kind == "ability":
         spit = struct.pack("<IIIfIIffI", 0, 0, 4, 0.0, 0, 0, 0.0, 0.0, 0)
     else:
@@ -406,16 +443,47 @@ def build_keyword(edid):
     return esp.record(b"KYWD", ids[edid], esp.join_subs(subs))
 
 
-def build_imad(edid):
-    """Velvet Haze screen effect: ParalyzeMassImod (saturation, contrast, tint kept) without any blur."""
-    subs = template(format(IMOD_DEPRESSANT_SOURCE, "08X"), "IMAD")
-    replace(subs, "EDID", esp.zstr(edid))
+def zero_blur(subs):
     for tag in IMAD_BLUR_TAGS:
         data = dict(subs)[tag]
         assert len(data) % 8 == 0, tag
         floats = list(struct.unpack(f"<{len(data) // 4}f", data))
         floats[1::2] = [0.0] * len(floats[1::2])
         replace(subs, tag, struct.pack(f"<{len(floats)}f", *floats))
+
+
+def build_imad(edid):
+    """Velvet Haze screen effect: ParalyzeMassImod (saturation, contrast, tint kept) without any blur."""
+    subs = template(format(IMOD_DEPRESSANT_SOURCE, "08X"), "IMAD")
+    replace(subs, "EDID", esp.zstr(edid))
+    zero_blur(subs)
+    return esp.record(b"IMAD", ids[edid], esp.join_subs(subs))
+
+
+# IMAD cinematic saturation tracks (subrecord tags: first byte 0x11 = multiplier, 0x51 = additive, then "IAD"): the
+# first byte indexes the record's tracks in xEdit's order (HDR, bloom, then cinematic saturation at 0x11). Which
+# track is which was read from the layout, not seen in game: unverified.
+IMAD_SAT_MUL, IMAD_SAT_ADD = "IAD", "QIAD"
+
+
+def build_imad_comedown(edid):
+    """Black-and-white comedown: ParalyzeMassImod with no blur, no tint / fade colour (alpha 0), saturation multiplied
+    by 0 (and nothing added), and a duration of COMEDOWN_IMOD_SECONDS instead of 6 s."""
+    subs = template(format(IMOD_DEPRESSANT_SOURCE, "08X"), "IMAD")
+    replace(subs, "EDID", esp.zstr(edid))
+    zero_blur(subs)
+    for tag in ("TNAM", "NAM3"):  # colour keys: time, r, g, b, strength
+        data = dict(subs)[tag]
+        floats = list(struct.unpack(f"<{len(data) // 4}f", data))
+        floats[4::5] = [0.0] * len(floats[4::5])
+        replace(subs, tag, struct.pack(f"<{len(floats)}f", *floats))
+    for tag in (IMAD_SAT_MUL, IMAD_SAT_ADD):
+        data = dict(subs)[tag]
+        floats = list(struct.unpack(f"<{len(data) // 4}f", data))
+        floats[1::2] = [0.0] * len(floats[1::2])
+        replace(subs, tag, struct.pack(f"<{len(floats)}f", *floats))
+    dnam = dict(subs)["DNAM"]
+    replace(subs, "DNAM", patch(dnam, 4, "<f", COMEDOWN_IMOD_SECONDS))
     return esp.record(b"IMAD", ids[edid], esp.join_subs(subs))
 
 
@@ -458,7 +526,7 @@ def build():
         "BOOK": [build_book("HighrimNote" + hold, hold) for hold in HOLDS],
         "ALCH": [build_alch(*drugs[e]) for e in ALCH_EDIDS],
         "COBJ": [build_cobj(*r) for r in RECIPES],
-        "IMAD": [build_imad(IMAD_VELVET)],
+        "IMAD": [build_imad(IMAD_VELVET), build_imad_comedown(IMAD_COMEDOWN)],
         "QUST": [build_mcm_quest(MOD_NAME)],
     }
     groups = [esp.group(rtype.encode("ascii"), records[rtype]) for rtype in

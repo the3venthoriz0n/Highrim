@@ -36,5 +36,24 @@
     "HighrimRecipeDreamcap": "0x000820",
     "Highrim_MCM": "0x000D62"
   },
-  "retired": []
+  "retired": [],
+  "provisional": {
+    "HighrimFxDetectLife": "0x000D63",
+    "HighrimAbSpeedUp": "0x000D64",
+    "HighrimAbStaminaUp": "0x000D65",
+    "HighrimAbRegenUp": "0x000D66",
+    "HighrimAbResistUp": "0x000D67",
+    "HighrimAbSlow": "0x000D68",
+    "HighrimStackRimerush1": "0x000D69",
+    "HighrimStackRimerush2": "0x000D6A",
+    "HighrimStackRimerush3": "0x000D6B",
+    "HighrimStackVelvetHaze1": "0x000D6C",
+    "HighrimStackVelvetHaze2": "0x000D6D",
+    "HighrimStackVelvetHaze3": "0x000D6E",
+    "HighrimStackDreamcap1": "0x000D6F",
+    "HighrimStackDreamcap2": "0x000D70",
+    "HighrimStackDreamcap3": "0x000D71",
+    "HighrimImodVelvet": "0x000D72"
+  },
+  "_comment2": "provisional: IDs given out by development builds after 0.1.0 (not part of the 0.1.0 contract, but kept stable for saves made with those builds)."
 }

@@ -59,6 +59,17 @@ namespace Highrim::Forms
     inline constexpr std::uint32_t HighrimStackDreamcap2 = 0x000D70;
     inline constexpr std::uint32_t HighrimStackDreamcap3 = 0x000D71;
     inline constexpr std::uint32_t HighrimImodVelvet = 0x000D72;
+    inline constexpr std::uint32_t HighrimAbLostGear = 0x000D73;
+    inline constexpr std::uint32_t HighrimLostGearWhiterun = 0x000D74;
+    inline constexpr std::uint32_t HighrimLostGearEastmarch = 0x000D75;
+    inline constexpr std::uint32_t HighrimLostGearRift = 0x000D76;
+    inline constexpr std::uint32_t HighrimLostGearHaafingar = 0x000D77;
+    inline constexpr std::uint32_t HighrimLostGearHjaalmarch = 0x000D78;
+    inline constexpr std::uint32_t HighrimLostGearReach = 0x000D79;
+    inline constexpr std::uint32_t HighrimLostGearFalkreath = 0x000D7A;
+    inline constexpr std::uint32_t HighrimLostGearPale = 0x000D7B;
+    inline constexpr std::uint32_t HighrimLostGearWinterhold = 0x000D7C;
+    inline constexpr std::uint32_t HighrimImodComedown = 0x000D7D;
 
     // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers (Velvet Haze uses HighrimImodVelvet).
     inline constexpr std::uint32_t kImodStimulant = 0x10C761;

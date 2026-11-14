@@ -127,8 +127,10 @@ namespace
         {
             Addiction a = fresh();
             a.level[0] = 50.f;
+            a.level[1] = 50.f;
             Decay(a, 24.0);  // one day
-            CHECK(std::fabs(a.level[0] - 45.f) < 1e-3f);
+            CHECK(std::fabs(a.level[0] - 47.f) < 1e-3f);  // Rimerush decays 3 per day
+            CHECK(std::fabs(a.level[1] - 45.f) < 1e-3f);  // the others 5
             CHECK(a.lastUpdateHours == 24.0);
             Decay(a, 24.0 * 100);  // floor at 0
             CHECK(a.level[0] == 0.f);
@@ -160,6 +162,72 @@ namespace
             CHECK(a.level[1] == 100.f);
             AddDose(a, DrugType::kHallucinogen, 29.0);
             CHECK(a.level[2] == 30.f);
+        }
+
+        // Task 15: Rimerush is the most addictive (per-type dose gain and decay).
+        CHECK(kRimerushDoseAmount == 40.f && kDoseAmount == 30.f);
+        CHECK(kRimerushDecayPerDay == 3.0 && kDecayPerDay == 5.0);
+        CHECK(DoseAmountFor(DrugType::kStimulant) == 40.f);
+        CHECK(DoseAmountFor(DrugType::kDepressant) == 30.f && DoseAmountFor(DrugType::kHallucinogen) == 30.f);
+        CHECK(DecayPerDayFor(DrugType::kStimulant) == 3.0);
+        CHECK(DecayPerDayFor(DrugType::kDepressant) == 5.0 && DecayPerDayFor(DrugType::kHallucinogen) == 5.0);
+        {
+            Addiction a = fresh();
+            AddDose(a, DrugType::kStimulant, 0.0);
+            CHECK(a.level[0] == 40.f && a.level[1] == 0.f);
+            a.level[1] = 50.f;
+            a.level[2] = 50.f;
+            AddDose(a, DrugType::kStimulant, 24.0);  // one day: Rimerush -3 then +40, the others -5
+            CHECK(std::fabs(a.level[0] - 77.f) < 1e-3f);
+            CHECK(std::fabs(a.level[1] - 45.f) < 1e-3f && std::fabs(a.level[2] - 45.f) < 1e-3f);
+            for (int i = 0; i < 5; ++i) AddDose(a, DrugType::kStimulant, 24.0);
+            CHECK(a.level[0] == 100.f);
+        }
+
+        // The full blackout is its own gate.
+        CHECK(FullBlackoutAllowed(true) && !FullBlackoutAllowed(false));
+
+        // Rimerush withdrawal drain.
+        CHECK(RimerushDrainActive(10.f, 4.0) && !RimerushDrainActive(9.9f, 50.0) && !RimerushDrainActive(50.f, 3.99));
+        {
+            CHECK(std::fabs(RimerushDrainPerSecond(10.0, 0.0) - kRimerushDrainBase * 0.7) < 1e-9);
+            CHECK(std::fabs(RimerushDrainPerSecond(100.0, 0.0) - kRimerushDrainBase * 2.5) < 1e-9);
+            CHECK(RimerushDrainPerSecond(10.0, 0.0) > 0.6 && RimerushDrainPerSecond(10.0, 0.0) < 0.75);
+            CHECK(RimerushDrainPerSecond(100.0, 0.0) > 2.3 && RimerushDrainPerSecond(100.0, 0.0) < 2.55);
+            CHECK(RimerushDrainPerSecond(60.0, 0.0) > RimerushDrainPerSecond(30.0, 0.0));
+            CHECK(std::fabs(RimerushDrainPerSecond(50.0, 6.0) - RimerushDrainPerSecond(50.0, 0.0) * 1.5) < 1e-9);
+            CHECK(std::fabs(RimerushDrainPerSecond(50.0, 12.0) - RimerushDrainPerSecond(50.0, 0.0) * 2.0) < 1e-9);
+            CHECK(std::fabs(RimerushDrainPerSecond(50.0, 24.0) - RimerushDrainPerSecond(50.0, 0.0) * 3.0) < 1e-9);
+            CHECK(RimerushDrainPerSecond(50.0, 1000.0) == RimerushDrainPerSecond(50.0, 24.0));
+            CHECK(RimerushDrainPerSecond(9.0, 5.0) == 0.0);
+            CHECK(RimerushDrainPerSecond(nan, 5.0) == 0.0 && RimerushDrainPerSecond(50.0, nan) == 0.0);
+            CHECK(RimerushDrainPerSecond(500.0, 0.0) == RimerushDrainPerSecond(100.0, 0.0));
+            CHECK(RimerushDrainPerSecond(50.0, -3.0) == RimerushDrainPerSecond(50.0, 0.0));
+        }
+        {
+            CHECK(DrainedValue(100.0, 2.0, 1.0, 0.0) == 98.0);
+            CHECK(DrainedValue(1.0, 2.0, 1.0, 0.0) == 0.0);
+            CHECK(DrainedValue(8.0, 2.0, 5.0, kHealthDrainFloor) == kHealthDrainFloor);
+            CHECK(DrainedValue(3.0, 2.0, 1.0, kHealthDrainFloor) == 3.0);
+            CHECK(DrainedValue(50.0, nan, 1.0, 0.0) == 50.0 && DrainedValue(50.0, 1.0, nan, 0.0) == 50.0);
+            CHECK(DrainedValue(50.0, -1.0, 1.0, 0.0) == 50.0);
+            CHECK(kHealthDrainFloor == 5.0);
+            // regeneration is suppressed: a small rise since the value the drain left is cancelled, a big one (a potion) is not
+            CHECK(DrainBaseValue(52.0, 50.0, kRegenRiseLimit) == 50.0);
+            CHECK(DrainBaseValue(50.0 + kRegenRiseLimit, 50.0, kRegenRiseLimit) == 50.0);
+            CHECK(DrainBaseValue(50.0 + kRegenRiseLimit + 1.0, 50.0, kRegenRiseLimit) == 50.0 + kRegenRiseLimit + 1.0);
+            CHECK(DrainBaseValue(40.0, 50.0, kRegenRiseLimit) == 40.0);  // fell: take the lower value
+            CHECK(DrainBaseValue(40.0, nan, kRegenRiseLimit) == 40.0);   // no previous value
+            CHECK(!DrainDepleted(6.0, 1.0, 1.0));
+            CHECK(DrainDepleted(5.0, 50.0, 50.0) && DrainDepleted(50.0, 0.0, 50.0) && DrainDepleted(50.0, 50.0, 0.0));
+            CHECK(DrainDepleted(2.0, 50.0, 50.0));
+            CHECK(DrainWarningStage(1.0) == 0 && DrainWarningStage(0.51) == 0);
+            CHECK(DrainWarningStage(0.5) == 1 && DrainWarningStage(0.26) == 1);
+            CHECK(DrainWarningStage(0.25) == 2 && DrainWarningStage(0.0) == 2);
+            CHECK(DrainWarningStage(nan) == 0);
+            CHECK(kDrainPauseSeconds == 300.0 && kDrainBlackoutRestoreFraction == 0.25);
+            CHECK(std::string(RimerushDrainStartMessage()) == "Rimerush withdrawal: you are fading. You need more Rimerush.");
+            CHECK(std::string(RimerushDrainStopMessage()) == "The Rimerush rush returns.");
         }
 
         // WithdrawalTier.
@@ -526,6 +594,18 @@ namespace
             CancelComedowns(t);
             CHECK(!IsHigh(t));
         }
+        {
+            // "Shaky and Suspicious" applies to Velvet Haze and Dreamcap highs only, never to a Rimerush high alone.
+            ComedownTimers t;
+            CHECK(!IsShakyHigh(t));
+            OnComedownDose(t, DrugType::kStimulant, 10.0);
+            CHECK(IsHigh(t) && !IsShakyHigh(t));
+            OnComedownDose(t, DrugType::kHallucinogen, 11.0);
+            CHECK(IsShakyHigh(t));
+            CancelComedowns(t);
+            OnComedownDose(t, DrugType::kDepressant, 12.0);
+            CHECK(IsShakyHigh(t));
+        }
         CHECK(LostGearMessage("Windhelm") == "You wake up with a splitting headache. Last night is a blur... maybe the guards in Windhelm took your things.");
         CHECK(LostGearMessage("Windhelm").find("prison") == std::string::npos);
 
@@ -722,6 +802,8 @@ int main()
     CHECK(s.blackoutDoses == 4);
     CHECK(s.ragdoll);
     CHECK(s.debugBlackoutKey == 0);
+    CHECK(s.rimerushWithdrawalBlackout);  // default on
+    CHECK(!s.fullBlackout);               // default OFF
 
     // Shipped defaults file.
     Write(data / "MCM/Config/Highrim/settings.ini",
@@ -734,7 +816,7 @@ int main()
 
     // User override wins; values are clamped.
     Write(data / "MCM/Settings/Highrim.ini",
-        "[General]\nbOverdose = 0\nbDebug = 1\niDoseWindowMinutes = 9999\niBlackoutDoses = 99\niDebugBlackoutKey = 24\n");
+        "[General]\nbOverdose = 0\nbDebug = 1\niDoseWindowMinutes = 9999\niBlackoutDoses = 99\niDebugBlackoutKey = 24\nbFullBlackout = 1\nbRimerushWithdrawalBlackout = 0\n");
     Highrim::Config::Load();
     s = Highrim::Config::Get();
     CHECK(s.enabled);
@@ -744,6 +826,7 @@ int main()
     CHECK(s.doseWindowMinutes == 240);
     CHECK(s.blackoutDoses == 8);  // clamped
     CHECK(s.debugBlackoutKey == 24);
+    CHECK(s.fullBlackout && !s.rimerushWithdrawalBlackout);
 
     fs::remove_all(data.parent_path());
     std::printf("ok\n");

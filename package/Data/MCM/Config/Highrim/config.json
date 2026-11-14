@@ -71,6 +71,24 @@
 			}
 		},
 		{
+			"id": "bRimerushWithdrawalBlackout:General",
+			"text": "Withdrawal blackouts",
+			"type": "toggle",
+			"help": "Rimerush withdrawal can drain you to a blackout.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
+			"id": "bFullBlackout:General",
+			"text": "Full blackout (lose gear)",
+			"type": "toggle",
+			"help": "Off: you only faint. On: gear lost, new place.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		},
+		{
 			"text": "Debug",
 			"type": "header"
 		},

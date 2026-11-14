@@ -106,6 +106,8 @@ namespace Highrim::Config
             s.doseWindowMinutes = Number("General", "iDoseWindowMinutes", s.doseWindowMinutes, 5, 240);
             s.blackoutDoses = Number("General", "iBlackoutDoses", s.blackoutDoses, 2, 8);
             s.ragdoll = Flag("General", "bRagdoll", s.ragdoll);
+            s.rimerushWithdrawalBlackout = Flag("General", "bRimerushWithdrawalBlackout", s.rimerushWithdrawalBlackout);
+            s.fullBlackout = Flag("General", "bFullBlackout", s.fullBlackout);
             s.debug = Flag("General", "bDebug", s.debug);
             s.debugBlackoutKey = Number("General", "iDebugBlackoutKey", s.debugBlackoutKey, 0, 1000);
             return s;

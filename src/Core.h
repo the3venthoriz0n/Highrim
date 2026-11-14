@@ -54,9 +54,15 @@ namespace Highrim::Core
     inline constexpr float  kMaxLevel             = 100.f;
     inline constexpr double kDecayPerDay          = 5.0;   // level lost per game day
     inline constexpr double kWithdrawalGraceHours = 4.0;   // no withdrawal this soon after the drug's last dose
+    // Rimerush is the most addictive drug: a bigger dose gain and a slower decay (the grace time is the same).
+    inline constexpr float  kRimerushDoseAmount   = 40.f;
+    inline constexpr double kRimerushDecayPerDay  = 3.0;
     inline constexpr float  kTier1Level           = 10.f;  // tier 1 from here, tier 0 below
     inline constexpr float  kTier2Level           = 35.f;
     inline constexpr float  kTier3Level           = 60.f;
+
+    float  DoseAmountFor(DrugType type);   // kRimerushDoseAmount for Rimerush, kDoseAmount for the others
+    double DecayPerDayFor(DrugType type);  // kRimerushDecayPerDay for Rimerush, kDecayPerDay for the others
 
     struct Addiction
     {
@@ -74,6 +80,40 @@ namespace Highrim::Core
     // The drug whose withdrawal is the worst (highest tier, same decay and grace rules as HighestTier). A tie goes to
     // the lowest type index (Rimerush, then Velvet Haze, then Dreamcap). nullopt when no drug is in withdrawal.
     std::optional<DrugType> WorstDrugForTier(const Addiction& a, double nowHours);
+
+    // Rimerush withdrawal drain (Task 15). The plugin drains the player's Health, Magicka and Stamina about once per real
+    // second while the Rimerush dependency is at kTier1Level or more and the grace time has passed (the same condition
+    // as a withdrawal tier), until a Rimerush dose is taken. Rate per bar per real second:
+    //   kRimerushDrainBase * (0.5 + level / 50) * min(kRimerushDrainTimeCap, 1 + hoursIntoWithdrawal / kRimerushDrainTimeHours)
+    // The brief named a base of 0.4 but also the range "about 0.6/s at level 10 up to about 2.4/s at level 100"; the
+    // formula gives 0.7 and 2.5 times the base, so the base that matches the range is 0.96 (0.67/s and 2.4/s).
+    inline constexpr double kRimerushDrainBase            = 0.96;
+    inline constexpr double kRimerushDrainTimeHours       = 12.0;
+    inline constexpr double kRimerushDrainTimeCap         = 3.0;
+    inline constexpr double kHealthDrainFloor             = 5.0;    // health is never drained below this (never kills)
+    inline constexpr double kDrainPauseSeconds            = 300.0;  // no drain and no new withdrawal blackout after one
+    inline constexpr double kDrainBlackoutRestoreFraction = 0.25;   // each bar is set to this part of its maximum after
+    // The third, independent gate (next to bOverdose and bRimerushWithdrawalBlackout): only the full blackout sequence
+    // (items to the prison chest, teleport, note, Lost Gear, 6 h skip) needs bFullBlackout. Off by default.
+    bool FullBlackoutAllowed(bool fullBlackoutSetting);
+    bool RimerushDrainActive(float level, double hoursSinceLastDose);  // level >= kTier1Level and past the grace time
+    // hoursIntoWithdrawal = hours since the last dose minus kWithdrawalGraceHours (negative counts as 0). 0 for a level
+    // below kTier1Level or a non-finite input; the level is capped at kMaxLevel.
+    double RimerushDrainPerSecond(double level, double hoursIntoWithdrawal);
+    // current - perSecond * dtSeconds, never below floor and never raised (a value already at or below floor stays; a
+    // non-finite or non-positive rate or time changes nothing).
+    double DrainedValue(double current, double perSecond, double dtSeconds, double floor);
+    // Regeneration suppression: the value the drain starts from. lastSet is what the previous poll left the bar at (NaN =
+    // none). A rise of at most maxRise since then is natural regeneration and is cancelled (returns lastSet); a bigger rise
+    // (a potion) or a fall returns current.
+    inline constexpr double kRegenRiseLimit = 12.0;
+    double DrainBaseValue(double current, double lastSet, double maxRise);
+    // Health <= kHealthDrainFloor, or Magicka <= 0, or Stamina <= 0.
+    bool DrainDepleted(double health, double magicka, double stamina);
+    // HUD warning stage for the lowest bar's fraction of its maximum: 0 above 50%, 1 at 50% or less, 2 at 25% or less.
+    int         DrainWarningStage(double lowestFraction);
+    const char* RimerushDrainStartMessage();
+    const char* RimerushDrainStopMessage();
 
     // "Addicted": a type's dependency level (after decay) is at least kTier1Level. One flag per drug type.
     bool                IsAddicted(float level);
@@ -127,6 +167,8 @@ namespace Highrim::Core
     // A high lasts from a counted dose until its comedown is due: true while any drug has a comedown pending.
     struct ComedownTimers;
     bool IsHigh(const ComedownTimers& t);
+    // A high that carries "Shaky and Suspicious": Velvet Haze or Dreamcap (not Rimerush alone).
+    bool IsShakyHigh(const ComedownTimers& t);
     std::string LostGearMessage(std::string_view city);  // shown after waking up; vague on purpose, never says "prison"
 
     // Did a teleport work? The blackout moves the player with MoveTo, which the engine applies a moment later, so the

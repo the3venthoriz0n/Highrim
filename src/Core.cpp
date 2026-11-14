@@ -91,14 +91,24 @@ namespace Highrim::Core
         return 0.6 + 0.4 * (static_cast<double>(level) / static_cast<double>(kMaxStackLevel));
     }
 
+    float DoseAmountFor(DrugType type)
+    {
+        return type == DrugType::kStimulant ? kRimerushDoseAmount : kDoseAmount;
+    }
+
+    double DecayPerDayFor(DrugType type)
+    {
+        return type == DrugType::kStimulant ? kRimerushDecayPerDay : kDecayPerDay;
+    }
+
     void Decay(Addiction& a, double nowHours)
     {
         if (!std::isfinite(nowHours)) return;
         const double elapsed = nowHours - a.lastUpdateHours;
         if (!std::isfinite(elapsed) || elapsed < 0.0) return;
-        const double drop = kDecayPerDay * (elapsed / 24.0);
-        for (float& l : a.level) {
-            l = static_cast<float>(std::max(0.0, static_cast<double>(l) - drop));
+        for (std::size_t i = 0; i < 3; ++i) {
+            const double drop = DecayPerDayFor(static_cast<DrugType>(i)) * (elapsed / 24.0);
+            a.level[i]        = static_cast<float>(std::max(0.0, static_cast<double>(a.level[i]) - drop));
         }
         a.lastUpdateHours = nowHours;
     }
@@ -108,7 +118,7 @@ namespace Highrim::Core
         const auto i = static_cast<std::size_t>(type);
         if (i >= 3) return;
         Decay(a, nowHours);
-        a.level[i] = std::min(kMaxLevel, a.level[i] + kDoseAmount);
+        a.level[i] = std::min(kMaxLevel, a.level[i] + DoseAmountFor(type));
         a.lastDoseHours[i] = nowHours;
     }
 
@@ -118,6 +128,64 @@ namespace Highrim::Core
         if (level < kTier2Level) return 1;
         if (level < kTier3Level) return 2;
         return 3;
+    }
+
+    bool FullBlackoutAllowed(bool fullBlackoutSetting)
+    {
+        return fullBlackoutSetting;
+    }
+
+    bool RimerushDrainActive(float level, double hoursSinceLastDose)
+    {
+        return WithdrawalTier(level, hoursSinceLastDose) >= 1;
+    }
+
+    double RimerushDrainPerSecond(double level, double hoursIntoWithdrawal)
+    {
+        if (!std::isfinite(level) || !std::isfinite(hoursIntoWithdrawal) || level < kTier1Level) return 0.0;
+        level                = std::min(level, static_cast<double>(kMaxLevel));
+        const double hours   = std::max(0.0, hoursIntoWithdrawal);
+        const double timeMul = std::min(kRimerushDrainTimeCap, 1.0 + hours / kRimerushDrainTimeHours);
+        return kRimerushDrainBase * (0.5 + level / 50.0) * timeMul;
+    }
+
+    double DrainedValue(double current, double perSecond, double dtSeconds, double floor)
+    {
+        if (!std::isfinite(current) || !std::isfinite(perSecond) || !std::isfinite(dtSeconds) || perSecond <= 0.0 ||
+            dtSeconds <= 0.0 || current <= floor) {
+            return current;
+        }
+        return std::max(floor, current - perSecond * dtSeconds);
+    }
+
+    double DrainBaseValue(double current, double lastSet, double maxRise)
+    {
+        if (!std::isfinite(current) || !std::isfinite(lastSet)) return current;
+        const double rise = current - lastSet;
+        return (rise > 0.0 && rise <= maxRise) ? lastSet : current;
+    }
+
+    bool DrainDepleted(double health, double magicka, double stamina)
+    {
+        return health <= kHealthDrainFloor || magicka <= 0.0 || stamina <= 0.0;
+    }
+
+    int DrainWarningStage(double lowestFraction)
+    {
+        if (!std::isfinite(lowestFraction)) return 0;
+        if (lowestFraction <= 0.25) return 2;
+        if (lowestFraction <= 0.5) return 1;
+        return 0;
+    }
+
+    const char* RimerushDrainStartMessage()
+    {
+        return "Rimerush withdrawal: you are fading. You need more Rimerush.";
+    }
+
+    const char* RimerushDrainStopMessage()
+    {
+        return "The Rimerush rush returns.";
     }
 
     int HighestTier(const Addiction& a, double nowHours)
@@ -315,6 +383,12 @@ namespace Highrim::Core
             if (due.has_value()) return true;
         }
         return false;
+    }
+
+    bool IsShakyHigh(const ComedownTimers& t)
+    {
+        return t.dueSeconds[static_cast<std::size_t>(DrugType::kDepressant)].has_value() ||
+               t.dueSeconds[static_cast<std::size_t>(DrugType::kHallucinogen)].has_value();
     }
 
     std::string LostGearMessage(std::string_view city)

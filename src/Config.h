@@ -16,6 +16,8 @@ namespace Highrim::Config
         bool          addiction{ true };  // doses build dependency and withdrawal
         std::uint32_t doseWindowMinutes{ 120 };  // game minutes (5 to 240) that count as back to back
         std::uint32_t blackoutDoses{ 4 };       // 2 to 8: doses of any drug inside the window that black you out
+        bool          rimerushWithdrawalBlackout{ true };  // Rimerush withdrawal drained to 0 triggers the blackout path
+        bool          fullBlackout{ false };  // the full blackout sequence (lose gear, new place) is allowed; OFF by default
         bool          ragdoll{ true };    // Velvet Haze knocks the player over at random
         bool          debug{ false };
         std::uint32_t debugBlackoutKey{ 0 };  // DirectX scan code; 0 = none

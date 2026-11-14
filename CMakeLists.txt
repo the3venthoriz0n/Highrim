@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.24)
 # exist in a Skyrim install. This must be set before project().
 set(VCPKG_TARGET_TRIPLET "x64-windows-static-md" CACHE STRING "")
 
-project(Highrim VERSION 0.1.0 LANGUAGES CXX)
+project(Highrim VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

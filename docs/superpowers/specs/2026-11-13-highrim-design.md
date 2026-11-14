@@ -39,7 +39,7 @@ Back-to-back window (game minutes), doses to blackout, enable overdose blackout,
 - Teleports are position changes the server already syncs. **Unverified:** the chest transfer and the teleport. Build and test these two first.
 
 ## Crafting (decided)
-Cooking-pot recipes from vanilla ingredients (COBJ, bench keyword CraftingCookpot, no conditions). Exact recipes are my call in the plan.
+Cooking-pot recipes from vanilla ingredients (COBJ, bench keyword CraftingCookpot, no conditions). Task 13 (owner decision): every drug's recipe costs exactly 1000 gold (Gold001, count 1000) and nothing else, one potion per craft. Dreamcap's reveal life is cast by the plugin (vanilla Detect Life), not by a potion effect.
 
 ## Build approach (my call)
 Reuse what Sleep Together proved: C++23 SKSE plugin with CommonLibSSE-NG, CMake + vcpkg, MCM Helper config with a generated

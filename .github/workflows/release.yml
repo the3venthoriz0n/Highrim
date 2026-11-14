@@ -8,7 +8,8 @@ name: Release
 # One-time setup (see README, "Releasing"):
 #   secret   NEXUSMODS_API_KEY   your Nexus API key
 #   variable NEXUS_FILE_ID       ID of the file to add versions to (upload the first file by hand)
-#   variable NEXUS_MOD_ID        Nexus mod ID (only needed to post the changelog)
+#   variable NEXUS_MOD_ID        the mod's "Unique Mod ID" from the Advanced panel (the long number, NOT the number in
+#                                the page URL); only needed to post the changelog
 # Without them the Nexus step is skipped and the release is still made.
 #
 # Run manually from the Actions tab to build and package without releasing or uploading.
@@ -101,6 +102,7 @@ jobs:
         run: ctest --test-dir out\build-release -C Release --output-on-failure
 
       - name: Package
+        id: package
         shell: pwsh
         run: powershell -File tools\make_archive.ps1 -Version ${{ steps.ver.outputs.version }}
 
@@ -131,8 +133,10 @@ jobs:
           mod_id: ${{ vars.NEXUS_MOD_ID }}
           changelog: See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
 
+      # Runs even when the Nexus step fails (for example a changelog error after the file was uploaded), as long as
+      # the build and package succeeded.
       - name: Commit the version bump back to main
-        if: github.ref_type == 'tag'
+        if: always() && github.ref_type == 'tag' && steps.package.conclusion == 'success'
         continue-on-error: true
         shell: pwsh
         run: |

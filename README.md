@@ -307,16 +307,67 @@ Unverified: that `AddSpell`/`RemoveSpell` on the player apply and remove the abi
 
 CommonLibSSE-NG is GPL-3.0-or-later and is linked into the plugin, so Highrim is GPL too (see COPYING).
 
+## Contributing
+
+**Set up.** You need Visual Studio with the C++ workload, CMake, vcpkg (`VCPKG_ROOT`, default `C:\devcpkg`), Python 3 and git.
+
+    git clone --recurse-submodules https://github.com/the3venthoriz0n/Highrim.git
+    build_release.bat                                         (from a Visual Studio x64 command prompt)
+    ctest --test-dir outuild-release -C Release --output-on-failure
+
+If you already have a configured build folder (it may be a Ninja one), just run `cmake --build outuild-release` and `ctest --test-dir outuild-release --output-on-failure` from a Visual Studio command prompt; do not reconfigure it with a different generator.
+
+**The five test suites** (all must pass before a pull request):
+- `HighrimTests`: the C++ rules in `src/Core.*` and the settings (`tests/test_main.cpp`).
+- `EspTests`: re-parses the generated plugin (`tests/test_esp.py`), including the pinned form IDs.
+- `GameDataTests`: checks the generated prison/marker table against `Skyrim.esm` (skips itself when the game is not installed; set `HIGHRIM_SKYRIM_ESM` to point at the file).
+- `SourceTests`: source sanity checks, for example every hold's note ID matches `Forms.h`.
+- `NgRelocationTests`: fails if the plugin calls a CommonLibSSE-NG function that has no address on Skyrim AE / 1.7.x (that is a null call and crashes the game).
+
+**House rules.**
+- Put game-free rules in `Core` and write the test first. Game-touching code stays thin, guarded, and logs every decision (`Highrim.log`).
+- Never remove a player's items unless the move into the chest was verified; on any mismatch put everything back.
+- Generated files are committed: `package/Data/Highrim.esp`, `src/Forms.h`, `src/GameData.h`. Change the generator (`tools/make_esp.py`, `tools/extract_game_data.py`) and regenerate; never edit them by hand.
+- Form IDs are pinned (see Build): never edit or remove an entry in `tools/pinned_form_ids.json`; new records get new IDs.
+- Do not edit version numbers by hand (see Releasing: the tag is the version).
+- Say what is verified and what is not. Nothing that touches the game counts as verified until it has run in Skyrim; put new unverified behaviour in the "Verified vs unverified" table.
+- Commit with your GitHub noreply address, small commits, one concern each.
+
+**Pull requests.** Branch from `main`, open a pull request into `main`, and describe what changed and why, which of the five suites you ran, and what you tried in game (paste the relevant `Highrim.log` lines). A tag may only be pushed on a commit that is already on `main`.
+
 ## Releasing
 
-To release, tag `main`: `git tag v0.1.1 && git push origin v0.1.1`. The tag is the version: the workflow `.github/workflows/release.yml`
-stamps it into `CMakeLists.txt`, `vcpkg.json`, `src/main.cpp` and `tools/make_archive.ps1` (it stops if any of them does not match
-exactly once), builds on Windows, packages the zip, creates a GitHub release, uploads the zip to Nexus Mods as a new version of the
-existing file, and finally commits the bumped version numbers back to `main` (if `main` moved in the meantime, or is protected,
-that last step only warns). The tag must look like `v1.2.3` and its commit must be on `main`.
+**To release, tag `main`.** The tag is the version, you never edit version numbers by hand.
 
-One-time setup (done): secret `NEXUSMODS_API_KEY` and variables `NEXUS_FILE_ID` and `NEXUS_MOD_ID`; without them the Nexus step is
-skipped. The workflow has not been run yet, so the first run may need fixes.
+1. **Make sure `main` is what you want to ship.** Merge your work, then locally: build, run the five test suites, install `dist\Highrim-<version>.zip` from `make_archive.bat`, play it, and read `Highrim.log` (no crash, the startup `Prison:` lines for every hold except Winterhold, `Dose:` lines, no unexpected errors).
+2. **Pick the next version** (`vMAJOR.MINOR.PATCH`): patch for fixes, minor for new features. It must be higher than the version on Nexus.
+3. **Tag and push:**
+
+        git checkout main && git pull
+        git tag v0.2.1
+        git push origin v0.2.1
+
+4. **Watch it:** `gh run watch` (or the Actions tab). The first run on a fresh cache takes about 23 minutes; later runs reuse the cached vcpkg packages.
+5. **Check the result:** the run is green; the GitHub release has `Highrim-<version>.zip`; the Nexus Files tab shows the new version of the existing file (Nexus may hold a new upload briefly for scanning); `main` has a new commit "Bump version to ..." made by `github-actions[bot]`, so pull it.
+
+**What the workflow does** (`.github/workflows/release.yml`, run on a Windows runner): checks the tag looks like `v1.2.3` and its commit is on `main`; stamps the version into `CMakeLists.txt`, `vcpkg.json`, `src/main.cpp` and `tools/make_archive.ps1` (it stops if any of them does not match exactly once); builds; runs the tests; runs `tools/make_archive.ps1` (which refuses a stale DLL); creates the GitHub release with the zip; uploads the zip to Nexus Mods as a new version of the existing file and posts a changelog entry pointing at the GitHub release; then commits the bumped version numbers back to `main`. The vcpkg packages are cached between runs.
+
+**Dry run, no release:** Actions tab, "Release", "Run workflow" on `main`. It builds, tests and packages and uploads the zip as a build artifact; it does not create a release, upload to Nexus or commit anything.
+
+**One-time setup (done for this repo).** First create the Nexus mod page and upload the first zip by hand: the action can only add versions to an existing file. Then:
+
+    gh secret set NEXUSMODS_API_KEY --repo the3venthoriz0n/Highrim          (paste your Nexus API key when asked)
+    gh variable set NEXUS_FILE_ID --body <File ID> --repo the3venthoriz0n/Highrim
+    gh variable set NEXUS_MOD_ID  --body <Unique Mod ID> --repo the3venthoriz0n/Highrim
+
+Both numbers come from the file's "Advanced" panel on Nexus (Files tab with Advanced turned on, or the edit menu in Manage Files): **File ID** and **Unique Mod ID** (the long number, not the number in the page address; using the page-address number made the changelog call fail with "Mod not found"). Without the secret and `NEXUS_FILE_ID` the Nexus step is skipped and the GitHub release is still made.
+
+**If something goes wrong.**
+- *"Tag ... is not on main" or "must look like v1.2.3":* delete the tag (`git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`), fix, tag again.
+- *The Nexus step fails after "Mod file version created successfully":* the version is already on Nexus. Do not re-push the same tag; fix the cause and ship the next patch version. If only the changelog failed, add the changelog on the Nexus page by hand.
+- *The bump commit was skipped or failed* (for example `main` moved or is protected): make the same four edits by hand in a commit, or let the next release do it; stamping is idempotent.
+- *The build fails on the runner:* run the "Run workflow" dry run after each fix instead of pushing more tags.
+- *A zip for local testing is named with the old version:* that is normal; only the workflow stamps the tag version. The zip you install locally contains the same code.
 
 ## Dense effect lists (Task 17)
 

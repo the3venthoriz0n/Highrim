@@ -1,8 +1,8 @@
 # Highrim
 
-A Skyrim SE SKSE mod (version 0.1.0): three craftable cooking-pot drugs, per-drug addiction with escalating withdrawal, and an overdose blackout. Keep taking drugs and the effects stack, until you black out: your gear is moved to the nearest hold's prison chest and you wake up naked, with a note, at a distant map marker, six hours later, with a hangover.
+A Skyrim SE SKSE mod (current release 0.2.0): three craftable cooking-pot drugs, per-drug addiction with escalating withdrawal, and an overdose blackout. Keep taking drugs and the effects stack, until you black out: your gear is moved to the nearest hold's prison chest and you wake up naked, with a note, at a distant map marker, six hours later, with a hangover.
 
-**Status: v0.1.0, built and unit-tested, but never run in Skyrim.** See "Verified vs unverified" below before trusting any behaviour.
+**Status: released as 0.2.0 on Nexus Mods. Built and unit-tested, and partly played: the author's play logs show the dose, overdose-roll, faint, ragdoll, effect and gear-transfer paths working (see "Seen working in play logs"), but several features have not been seen in game yet.** See "Verified vs unverified" below before trusting any behaviour.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ A Skyrim SE SKSE mod (version 0.1.0): three craftable cooking-pot drugs, per-dru
 
 ## Install
 
-Install `Highrim_0.1.0.zip` with a mod manager (it contains `Data/SKSE/Plugins/Highrim.dll`, `Data/Highrim.esp` and the MCM files under `Data/MCM`), enable `Highrim.esp`, and start the game. The log is `Documents\My Games\Skyrim Special Edition\SKSE\Highrim.log` and starts with `Highrim 0.1.0 loading`.
+Install `Highrim_<version>.zip` with a mod manager (it contains `Data/SKSE/Plugins/Highrim.dll`, `Data/Highrim.esp` and the MCM files under `Data/MCM`), enable `Highrim.esp`, and start the game. The log is `Documents\My Games\Skyrim Special Edition\SKSE\Highrim.log` and starts with `Highrim 0.1.0 loading`.
 
 ## The drugs
 
@@ -204,11 +204,22 @@ All effects are local and nothing calls the server, so each player runs their ow
 | Skyrim Together compatibility | Unverified in game |
 | The GitHub release workflow | Not run yet |
 
+## Seen working in play logs (author's `Highrim.log`, 2026-11-13)
+
+What the logs actually showed on the author's Skyrim 1.7.104 setup (this list is evidence, not a promise for other setups):
+- The plugin loads, finds the prison chest of every hold except Winterhold at startup, and counts each dose of each drug (`Dose:` lines).
+- Every potion's effects were applied (`Highrim effects active: N of N expected`), including the Rimerush and Velvet Haze effect lists.
+- The overdose roll, the Overdose Risk tiers (Low, Elevated, High), "Shaky and Suspicious", the "Addicted" abilities and the hangover were added and removed as designed; a faint ran start to finish.
+- Velvet Haze ragdolls knock the player down (route `KnockExplosion`).
+- A full blackout moved 219 item stacks into the Eastmarch prison chest (verified per stack), applied a 6 hour time skip and the hangover, and the player woke up in a different place (the note lookup bug seen in that run has since been fixed and is not yet re-checked in game).
+
+Not seen yet or not confirmed: Dreamcap's Detect Life (the log counter shows 0 active effects after the cast; whether people show through walls is unconfirmed), the condensed Rimerush tooltip, the Lost Gear effect, the black-and-white comedown, the Rimerush withdrawal drain, withdrawal skill penalties in the Skills menu, and Cure Disease resistance.
+
 ## First run checklist
 
 Open `Highrim.log` after the first launch and look for:
 
-1. `Highrim 0.1.0 loading` at startup.
+1. `Highrim <version> loading` at startup (the version is stamped from the release tag).
 2. Between `Prison discovery: start` and `done`, one `Prison:` line for each of the nine holds (Whiterun, Eastmarch, Rift, Haafingar, Hjaalmarch, Reach, Falkreath, Pale, Winterhold). Eight should show a chest (`chest[faction]` or `chest[fallback]`); Winterhold should show `chest[missing]`.
 3. After drinking a potion, a `Dose:` line, for example `Dose: Rimerush stack 1/4, total 1/4, window 120 min, previous dose none -> no blackout: total below the dose count (level 0 strength 0.60)`. No line means dose detection does not work.
 4. Any drug again inside the window: `total 2/4`, and for the same drug `stack 2/4 level 1 ...` and `Stack: Rimerush level 1 ability, AddSpell -> true`; at the fourth dose `blackout=true`, then `Dose: overdose, starting the blackout`, then the `Blackout: step N` lines and `finished (success)`. Any `ABORT` or `MISMATCH` line explains a refused blackout.
@@ -217,7 +228,7 @@ Open `Highrim.log` after the first launch and look for:
 
 Please report which of these lines are missing or wrong.
 
-## Not in 0.1.0 (deferred)
+## Deferred (not built yet)
 
 - A dealer who sells the drugs (the `HighrimDrug` keyword is already on all three for it), and fences who return gear.
 - A random location for the gear instead of the nearest prison.
@@ -227,7 +238,7 @@ Please report which of these lines are missing or wrong.
 
     git submodule update --init --recursive
     build_release.bat      (from a VS x64 command prompt)
-    make_archive.bat       (writes dist\Highrim_0.1.0.zip)
+    make_archive.bat       (writes dist\Highrim_<version>.zip)
 
 Tests: `ctest --test-dir out\build-release -C Release --output-on-failure`.
 
@@ -354,7 +365,7 @@ If you already have a configured build folder (it may be a Ninja one), just run 
 
 **Dry run, no release:** Actions tab, "Release", "Run workflow" on `main`. It builds, tests and packages and uploads the zip as a build artifact; it does not create a release, upload to Nexus or commit anything.
 
-**One-time setup (done for this repo).** First create the Nexus mod page and upload the first zip by hand: the action can only add versions to an existing file. Then:
+**One-time setup (done for this repo).** First create the Nexus mod page **under Skyrim Special Edition (not "Skyrim", which is the Legacy Edition: files from a Legacy page download into Vortex's `skyrim` folder and Vortex will not install them into a Special Edition game)** and upload the first zip by hand: the action can only add versions to an existing file. Then:
 
     gh secret set NEXUSMODS_API_KEY --repo the3venthoriz0n/Highrim          (paste your Nexus API key when asked)
     gh variable set NEXUS_FILE_ID --body <File ID> --repo the3venthoriz0n/Highrim
@@ -366,6 +377,7 @@ Both numbers come from the file's "Advanced" panel on Nexus (Files tab with Adva
 - *"Tag ... is not on main" or "must look like v1.2.3":* delete the tag (`git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`), fix, tag again.
 - *The Nexus step fails after "Mod file version created successfully":* the version is already on Nexus. Do not re-push the same tag; fix the cause and ship the next patch version. If only the changelog failed, add the changelog on the Nexus page by hand.
 - *The bump commit was skipped or failed* (for example `main` moved or is protected): make the same four edits by hand in a commit, or let the next release do it; stamping is idempotent.
+- *Vortex downloads the file but never installs it (no error in `%APPDATA%\Vortexortex.log`):* check that the mod page is under Skyrim Special Edition and that the download path in the log says `skyrimse`, not `skyrim`. Pages cannot be moved between games; create a new page under Special Edition, upload the zip, and set `NEXUS_FILE_ID` and `NEXUS_MOD_ID` from the new page.
 - *The build fails on the runner:* run the "Run workflow" dry run after each fix instead of pushing more tags.
 - *A zip for local testing is named with the old version:* that is normal; only the workflow stamps the tag version. The zip you install locally contains the same code.
 

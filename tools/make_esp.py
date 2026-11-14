@@ -13,6 +13,11 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
    (HighrimFxRushHealth / Magicka, HighrimFxRimerushStamina reused, 18 HighrimFxRushSkill<Skill>); its stack abilities give
    +5 per level to the same values (HighrimAbHealthUp / MagickaUp, HighrimAbStaminaUp, 18 HighrimAbRushSkill<Skill>). The old
    speed and regen records (HighrimFxRimerushSpeed / Regen, HighrimAbSpeedUp / RegenUp) stay in the file, unused: pinned.)
+  (Task 18: Rimerush buffs go to 16 skills (not Alchemy, not Enchanting; their Fx / Ab records stay in the file, unused: pinned),
+   the potion and the stack abilities get "Faster Attacks" (Weapon Speed Multiplier), the high has no screen effect, every text is
+   condensed, the Rimerush drain can lower the maximums through the HighrimRavage spell, and "Addicted" and the withdrawal tiers
+   have timed versions (HighrimTimedAddicted<Drug>, HighrimTimedWithdrawal1..3 and fixed-length variants V0..V6 of each) next to the
+   old abilities, which stay in the file for saves made before.)
   KYWD  HighrimDrug                                 keyword on all three drugs (for the later dealer feature)
   MGEF  HighrimFxRimerushSpeed / Stamina / Regen    Rimerush effects (clones of potion effects)
         HighrimFxVelvetResist / VelvetSlow          Velvet Haze effects
@@ -84,12 +89,12 @@ GIANT_LICHEN, GLOWING_MUSHROOM, LAVENDER, HANGING_MOSS, SWAMP_FUNGAL_POD = (
 COOKPOT_KEYWORD = 0x000A5CB3
 VENDOR_ITEM_POTION = 0x0008CDEC
 MAGIC_ALCH_BENEFICIAL = 0x000F8A4E
-# Screen effects the plugin triggers itself (vanilla IMAD records in Skyrim.esm), one per drug type. Picked by
-# name only; what they look like in game is unverified. Candidates considered are listed in the README.
-IMOD_STIMULANT = 0x0010C761     # QuickReflexesImod: adrenaline rush (bright, contrasty)
+# Screen effects the plugin triggers itself (vanilla IMAD records in Skyrim.esm). Picked by name only; what they look like
+# in game is unverified. Candidates considered are listed in the README. Task 18: Rimerush (the stimulant) has none during
+# the high any more (QuickReflexesImod, 0010C761, is no longer used); only the comedown look follows it.
 IMOD_DEPRESSANT_SOURCE = 0x00031060  # ParalyzeMassImod: Velvet Haze's own IMAD (HighrimImodVelvet) is cloned from it
 IMOD_HALLUCINOGEN = 0x000C1966  # DA13PeryiteVisionImod: strong tinted vision
-IMODS = [("kImodStimulant", IMOD_STIMULANT), ("kImodHallucinogen", IMOD_HALLUCINOGEN)]
+IMODS = [("kImodHallucinogen", IMOD_HALLUCINOGEN)]
 IMAD_VELVET = "HighrimImodVelvet"
 # IMAD subrecords that hold blur: blur radius, double vision, radial blur strength / ramp up / ramp down / start /
 # rotation, depth of field strength / distance / range, motion blur. Each is a list of (time, value) float pairs; the
@@ -102,8 +107,7 @@ DRUGGED_EFFECT = 0x000E3CBB   # dunSleepingTreeDruggedAlch: the sleeping tree sa
 # dwarven, NoDetectLife, IsUndead). A condition that fails for one player but not another means no detection for that
 # player, so none are kept: one effect, one area, same for everybody. Undead, daedra and constructs now show too.
 DETECT_LIFE_AREA = 150
-DETECT_LIFE_TEXT = ("Living creatures and people are visible through walls within <area> feet for <dur> seconds. "
-                    "(Not on the Dreamcap potion any more: the plugin casts the vanilla Detect Life spell instead.)")
+DETECT_LIFE_TEXT = "Living things are visible through walls within <area> feet for <dur> seconds."  # unused: the plugin casts vanilla Detect Life
 GOLD = 0x0000000F             # Gold001
 RECIPE_GOLD = 1000            # every cooking pot recipe costs exactly this much gold and nothing else
 IMAD_COMEDOWN = "HighrimImodComedown"
@@ -130,6 +134,7 @@ T_AB_FORT_STAMINA = "00091F77"
 T_ALCH, T_BOOK, T_ABILITY, T_SPELL, T_COBJ, T_KYWD = "00057A7A", "000E1A9F", "0010FB30", "0005AD5C", "000F431F", "0008CDEC"
 
 ACTOR_VALUE_SPEED_MULT = 30
+ACTOR_VALUE_WEAPON_SPEED_MULT = 85   # "Weapon Speed Multiplier" (attack speed); vanilla effects use the whole multiplier (1.2 = 20% faster)
 ACTOR_VALUE_DAMAGE_RESIST = 39
 ACTOR_VALUE_STAMINA_RATE = 0x9D   # the value AbDamageStaminaRate and AlchFortifyStaminaRate change
 ACTOR_VALUE_HEAL_RATE = 0x9B      # the value VampireAbDamageHealRate changes
@@ -148,6 +153,20 @@ RIMERUSH_BASE = {"speed": 34, "stamina": 68, "regen": 135}   # Task 9 values, no
 # Task 15: what Rimerush gives while high (Health, Magicka, Stamina and every skill), and per stack level.
 RIMERUSH_BUFF = 10
 RIMERUSH_STACK_BUFF = 5
+# Task 18: Rimerush attack speed. The Weapon Speed Multiplier has a base of 0 (CommonLibSSE-NG: kBaseValueIsAlwaysZero) and the
+# vanilla effects that change it write the whole multiplier as the magnitude (PerkDualFlurry 1.2 / 1.35 = 20% / 35% faster,
+# PerkQuickShot 1.3), so the potion's magnitude is 1 + percent / 100 and each stack level adds the stack percent on top (modifiers
+# add up). Unverified in game: if the value turns out to start at 1.0 the potion would be +120%.
+RIMERUSH_ATTACK_SPEED_PERCENT = 20
+RIMERUSH_ATTACK_SPEED_STACK_PERCENT = 5
+RIMERUSH_ATTACK_SPEED = 1 + RIMERUSH_ATTACK_SPEED_PERCENT / 100
+RIMERUSH_ATTACK_SPEED_STACK = tuple(round(RIMERUSH_ATTACK_SPEED_STACK_PERCENT * n / 100, 2) for n in (1, 2, 3))
+# Task 18: the ravage (maximum reduction) spell and the timed addiction / withdrawal spells.
+RAVAGE_SECONDS = 99999        # like Survival Mode's penalty spells (a long timed spell the plugin dispels itself)
+TIMED_PLACEHOLDER_SECONDS = 3600   # the duration written in the base timed spells; the plugin sets the live effect's duration
+# Fixed-length variants of every timed spell (real seconds, the fallback if the live duration cannot be set): same table as
+# Core::kTimedVariantSeconds (tests/test_esp.py checks the two agree).
+TIMED_VARIANT_SECONDS = (600, 3600, 10800, 28800, 64800, 129600, 259200)
 VELVET_BASE = {"slow": 27, "regen": 500, "carry": 150}
 VELVET_STACK_REGEN = (100, 200, 300)   # more health regeneration (percent of the base rate) per stack level
 VELVET_STACK_CARRY = (50, 100, 150)    # more carry weight per stack level
@@ -163,10 +182,18 @@ SKILLS = [("One-handed", 6), ("Two-handed", 7), ("Archery", 8), ("Block", 9), ("
           ("Alteration", 18), ("Conjuration", 19), ("Destruction", 20), ("Illusion", 21), ("Restoration", 22),
           ("Enchanting", 23)]
 assert len(SKILLS) == 18
+# Task 18: Rimerush boosts 16 skills (Alchemy and Enchanting are left out); the withdrawal penalty stays on all 18.
+RUSH_SKILLS = [(n, av) for n, av in SKILLS if n not in ("Alchemy", "Enchanting")]
+assert len(RUSH_SKILLS) == 16
 
 
 def skill_edid(name):
     return "HighrimAbSkill" + "".join(w.capitalize() for w in name.replace("-", " ").split())
+
+
+def wd_skill_edid(name):
+    """HighrimFxWdSkill<Skill>: the timed withdrawal's hidden per-skill effect."""
+    return "HighrimFxWdSkill" + "".join(w.capitalize() for w in name.replace("-", " ").split())
 
 
 def rush_skill_edid(name, kind):
@@ -176,92 +203,94 @@ def rush_skill_edid(name, kind):
 
 # Task 16: overdose risk tiers (key, ability name, description). Same text as Core::RiskTierName / RiskTierDescription.
 OVERDOSE_TIERS = [
-    ("Low", "Overdose Risk: Low", "Your body is handling it, for now."),
-    ("Elevated", "Overdose Risk: Elevated", "Your heart is racing. One more dose could knock you out."),
-    ("High", "Overdose Risk: High", "You are on the edge. Another dose may put you on the floor, or worse."),
+    ("Low", "Overdose Risk: Low", "You are handling it, for now."),
+    ("Elevated", "Overdose Risk: Elevated", "One more dose could knock you out."),
+    ("High", "Overdose Risk: High", "Another dose may put you on the floor."),
 ]
 
 DRUG_NAMES = {"Rimerush": "Rimerush", "VelvetHaze": "Velvet Haze", "Dreamcap": "Dreamcap"}
-ADDICTED_TEXT = "You depend on {drug}. Without it you will go into withdrawal after about 4 hours."
-HIGHLY_ADDICTIVE_TEXT = ("This drug is highly addictive. Taking it builds dependency, and withdrawal follows when you "
-                         "stop.")
+ADDICTED_TEXT = "You depend on {drug}."                          # the old lasting ability (kept for saves)
+ADDICTED_TIMED_TEXT = "Dependent on {drug} until the timer ends."  # the timed spell: the timer is the time until the dependency is below 10
+HIGHLY_ADDICTIVE_TEXT = "Highly addictive: withdrawal follows when you stop."
 
-ALL_SKILLS_UP_TEXT = "All of your skills are increased by <mag> while Rimerush lasts."
-ALL_SKILLS_DOWN_TEXT = "All of your skills are reduced by <mag> while you are in withdrawal."
+ALL_SKILLS_UP_TEXT = "All skills except Alchemy and Enchanting +<mag>."
+ALL_SKILLS_DOWN_TEXT = "All skills changed by <mag> in withdrawal."
+ATTACK_SPEED_POTION_TEXT = f"Weapon attacks {RIMERUSH_ATTACK_SPEED_PERCENT}% faster for <dur> seconds."
+ATTACK_SPEED_STACK_TEXT = "Weapon attacks are faster."   # the spell text says how much per level (<pct>, see PLAIN)
 
 # (EDID, name, description, template, overrides)
 MGEFS = [
-    ("HighrimFxRimerushSpeed", "Rush Speed", "Movement speed is increased by <mag>% for <dur> seconds.",
+    ("HighrimFxRimerushSpeed", "Rush Speed", "Movement speed +<mag>% for <dur> seconds.",
      T_FORT_STAMINA, {"av": ACTOR_VALUE_SPEED_MULT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimFxRimerushStamina", "Rush Stamina", "Stamina is increased by <mag> points for <dur> seconds.",
+    ("HighrimFxRimerushStamina", "Rush Stamina", "Stamina +<mag> for <dur> seconds.",
      T_FORT_STAMINA, {}),
-    ("HighrimFxRimerushRegen", "Rush Recovery", "Stamina regenerates <mag>% faster for <dur> seconds.",
+    ("HighrimFxRimerushRegen", "Rush Recovery", "Stamina regeneration +<mag>% for <dur> seconds.",
      T_FORT_STAMINA_RATE, {}),
-    ("HighrimFxVelvetResist", "Velvet Armor", "Armor rating is increased by <mag> for <dur> seconds.",
+    ("HighrimFxVelvetResist", "Velvet Armor", "Armor +<mag> for <dur> seconds.",
      T_FORT_STAMINA, {"av": ACTOR_VALUE_DAMAGE_RESIST, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimFxVelvetSlow", "Velvet Drag", "Movement is slowed by <mag>% for <dur> seconds.", T_SAP_SLOW, {}),
+    ("HighrimFxVelvetSlow", "Velvet Drag", "Movement is <mag>% slower for <dur> seconds.", T_SAP_SLOW, {}),
     # Comedown, withdrawal and hangover effects are NOT clones of the detrimental (Damage ...) effects any more:
     # those carry the Hostile and Detrimental flags. They are Fortify-style clones with a negative magnitude, no
     # hostile/detrimental flag and no harmful keyword (see the README on Cure Disease).
-    ("HighrimFxRegenDown", "Slowed Recovery", "Stamina regeneration is changed by <mag>% for <dur> seconds.",
+    ("HighrimFxRegenDown", "Slowed Recovery", "Stamina regeneration changed by <mag>% for <dur> seconds.",
      T_FORT_STAMINA_RATE, {"drop": ["KSIZ", "KWDA"]}),
     ("HighrimFxDetectLife", "Detect Life", DETECT_LIFE_TEXT, "001019D8", {"drop": ["CTDA"]}),
-    ("HighrimAbRegenDown", "Cravings", "Stamina regeneration is changed by <mag>%.", T_AB_FORT_STAMINA,
+    ("HighrimAbRegenDown", "Cravings", "Stamina regeneration changed by <mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_STAMINA_RATE}),
-    ("HighrimAbStaminaDown", "Shakes", "Stamina is changed by <mag> points.", T_AB_FORT_STAMINA, {}),
-    ("HighrimAbHealRateDown", "Slow Healing", "Health regeneration is changed by <mag>%.", T_AB_FORT_STAMINA,
+    ("HighrimAbStaminaDown", "Shakes", "Stamina changed by <mag>.", T_AB_FORT_STAMINA, {}),
+    ("HighrimAbHealRateDown", "Slow Healing", "Health regeneration changed by <mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_HEAL_RATE}),
     # Dose stack effects: constant-effect (ability) clones of AbFortifyStamina with the actor value changed.
-    ("HighrimAbSpeedUp", "Surge Speed", "Movement speed is increased by <mag>%.", T_AB_FORT_STAMINA,
+    ("HighrimAbSpeedUp", "Surge Speed", "Movement speed +<mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_SPEED_MULT}),
-    ("HighrimAbStaminaUp", "Surge Stamina", "Stamina is increased by <mag> points.", T_AB_FORT_STAMINA, {}),
-    ("HighrimAbRegenUp", "Surge Recovery", "Stamina regenerates <mag>% faster.", T_AB_FORT_STAMINA,
+    ("HighrimAbStaminaUp", "Surge Stamina", "Stamina +<mag>.", T_AB_FORT_STAMINA, {}),
+    ("HighrimAbRegenUp", "Surge Recovery", "Stamina regeneration +<mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_STAMINA_RATE}),
-    ("HighrimAbResistUp", "Heavy Armor", "Armor rating is increased by <mag>.", T_AB_FORT_STAMINA,
+    ("HighrimAbResistUp", "Heavy Armor", "Armor +<mag>.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_DAMAGE_RESIST}),
-    ("HighrimAbSlow", "Dragging Limbs", "Movement speed is changed by <mag>%.", T_AB_FORT_STAMINA,
+    ("HighrimAbSlow", "Dragging Limbs", "Movement speed changed by <mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_SPEED_MULT}),
     # The effect the Lost Gear abilities carry. An ability needs at least one effect to appear in Active Effects, so
     # it is +1 carry weight (harmless); the spell's own description is what tells the player where the gear is.
-    ("HighrimAbLostGear", "Lost Gear", "Carry weight is increased by <mag>.", T_AB_FORT_STAMINA,
+    ("HighrimAbLostGear", "Lost Gear", "Your things may be with the guards.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_CARRY_WEIGHT}),
     # Task 14. The descriptor every potion carries (magnitude 0: a carry weight change of nothing).
     ("HighrimFxHighlyAddictive", "Highly Addictive", HIGHLY_ADDICTIVE_TEXT, T_FORT_STAMINA,
      {"av": ACTOR_VALUE_CARRY_WEIGHT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimFxVelvetHealRate", "Velvet Regeneration", "Health regenerates <mag>% faster for <dur> seconds.",
+    ("HighrimFxVelvetHealRate", "Velvet Regen", "Health regeneration +<mag>% for <dur> seconds.",
      T_FORT_STAMINA_RATE, {"av": ACTOR_VALUE_HEAL_RATE_MULT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimFxVelvetCarry", "Velvet Strength", "Carry weight is increased by <mag> for <dur> seconds.",
+    ("HighrimFxVelvetCarry", "Velvet Strength", "Carry weight +<mag> for <dur> seconds.",
      T_FORT_STAMINA, {"av": ACTOR_VALUE_CARRY_WEIGHT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimAbHealRateUp", "Surge Regeneration", "Health regenerates <mag>% faster.", T_AB_FORT_STAMINA,
+    ("HighrimAbHealRateUp", "Surge Regen", "Health regeneration +<mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_HEAL_RATE_MULT}),
-    ("HighrimAbCarryUp", "Surge Strength", "Carry weight is increased by <mag>.", T_AB_FORT_STAMINA,
+    ("HighrimAbCarryUp", "Surge Strength", "Carry weight +<mag>.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_CARRY_WEIGHT}),
     # Addicted abilities carry this: no effect on the game (magnitude 0), it only gives the ability a line in Active Effects.
     ("HighrimAbAddicted", "Addicted", "You depend on this drug.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_CARRY_WEIGHT}),
     # "Shaky and Suspicious": Speech and Sneak go to 0 while high.
-    ("HighrimAbShakySpeech", "Shaky Speech", "Speech is 0 while you are high.", T_AB_FORT_STAMINA, {"av": 17}),
-    ("HighrimAbShakySneak", "Suspicious Sneak", "Sneak is 0 while you are high.", T_AB_FORT_STAMINA, {"av": 15}),
+    ("HighrimAbShakySpeech", "Shaky Speech", "Speech is 0 while high.", T_AB_FORT_STAMINA, {"av": 17}),
+    ("HighrimAbShakySneak", "Suspicious Sneak", "Sneak is 0 while high.", T_AB_FORT_STAMINA, {"av": 15}),
     # Task 15: Rimerush buffs. Potion effects (timed) and ability effects (stack levels).
-    ("HighrimFxRushHealth", "Rush Vitality", "Health is increased by <mag> points for <dur> seconds.", T_FORT_STAMINA,
+    ("HighrimFxRushHealth", "Rush Vitality", "Health +<mag> for <dur> seconds.", T_FORT_STAMINA,
      {"av": ACTOR_VALUE_HEALTH, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimFxRushMagicka", "Rush Focus", "Magicka is increased by <mag> points for <dur> seconds.", T_FORT_STAMINA,
+    ("HighrimFxRushMagicka", "Rush Focus", "Magicka +<mag> for <dur> seconds.", T_FORT_STAMINA,
      {"av": ACTOR_VALUE_MAGICKA, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
-    ("HighrimAbHealthUp", "Surge Vitality", "Health is increased by <mag> points.", T_AB_FORT_STAMINA,
+    ("HighrimAbHealthUp", "Surge Vitality", "Health +<mag>.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_HEALTH}),
-    ("HighrimAbMagickaUp", "Surge Focus", "Magicka is increased by <mag> points.", T_AB_FORT_STAMINA,
+    ("HighrimAbMagickaUp", "Surge Focus", "Magicka +<mag>.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_MAGICKA}),
 ] + [
-    (rush_skill_edid(name, "Fx"), f"Rush {name}", f"{name} is increased by <mag> points for <dur> seconds.", T_FORT_STAMINA,
+    (rush_skill_edid(name, "Fx"), f"Rush {name}", f"{name} +<mag> for <dur> seconds.", T_FORT_STAMINA,
      {"av": av, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL], "hide": True})
     for name, av in SKILLS
 ] + [
-    (rush_skill_edid(name, "Ab"), f"Surge {name}", f"{name} is increased by <mag> points.", T_AB_FORT_STAMINA,
+    (rush_skill_edid(name, "Ab"), f"Surge {name}", f"{name} +<mag>.", T_AB_FORT_STAMINA,
      {"av": av, "hide": True})
     for name, av in SKILLS
 ] + [
     # One per skill, used by all three withdrawal abilities (the magnitude is the tier's penalty).
-    (skill_edid(name), f"Withdrawal: {name}", f"{name} is changed by <mag> while you are in withdrawal.",
+    (skill_edid(name), f"Withdrawal: {name}", f"{name} changed by <mag> in withdrawal.",
      T_AB_FORT_STAMINA, {"av": av, "hide": True})
     for name, av in SKILLS
 ] + [
@@ -278,19 +307,55 @@ MGEFS = [
     # an effect to be listed in Active Effects. The effect text is the plain description.
     (f"HighrimAbOverdose{key}", name, desc, T_AB_FORT_STAMINA, {"av": ACTOR_VALUE_CARRY_WEIGHT})
     for key, name, desc in OVERDOSE_TIERS
+] + [
+    # Task 18. Rimerush attack speed (potion and stack ability): the Weapon Speed Multiplier (see RIMERUSH_ATTACK_SPEED).
+    ("HighrimFxRushAttackSpeed", "Faster Attacks", ATTACK_SPEED_POTION_TEXT, T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_WEAPON_SPEED_MULT, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
+    ("HighrimAbAttackSpeedUp", "Faster Attacks", ATTACK_SPEED_STACK_TEXT, T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_WEAPON_SPEED_MULT, "show": True}),
+    # The ravage effects (Rimerush withdrawal): Peak Value Modifier clones of Fortify Stamina with a negative magnitude that
+    # the plugin writes before it casts HighrimRavage; they lower the MAXIMUM of the bar, as Survival Mode's penalties do.
+    ("HighrimFxRavageHealth", "Drained Health", "Withdrawal lowers your maximum health.", T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_HEALTH, "assoc": 0, "drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxRavageMagicka", "Drained Magicka", "Withdrawal lowers your maximum magicka.", T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_MAGICKA, "assoc": 0, "drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxRavageStamina", "Drained Stamina", "Withdrawal lowers your maximum stamina.", T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_STAMINA, "assoc": 0, "drop": ["KSIZ", "KWDA"]}),
+    # Timed addiction and withdrawal (spells, so the game's Active Effects timer counts down): potion-style clones of the
+    # ability effects above, no hostile / detrimental flags and no keywords (as the comedown effects). Like the abilities, only the
+    # descriptor ("All Skills Reduced") is listed in Active Effects; the others are hidden (Hide in UI).
+    ("HighrimFxAddicted", "Addicted", "You depend on this drug until the timer ends.", T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_CARRY_WEIGHT, "assoc": 0, "drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxWdRegenDown", "Cravings", "Stamina regeneration changed by <mag>%.", T_FORT_STAMINA_RATE,
+     {"hide": True, "drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxWdStaminaDown", "Shakes", "Stamina changed by <mag>.", T_FORT_STAMINA, {"hide": True, "drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxWdHealRateDown", "Slow Healing", "Health regeneration changed by <mag>%.", T_FORT_STAMINA_RATE,
+     {"av": ACTOR_VALUE_HEAL_RATE, "hide": True, "drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxWdAllSkillsDown", "All Skills Reduced", ALL_SKILLS_DOWN_TEXT, T_FORT_STAMINA,
+     {"av": ACTOR_VALUE_VARIABLE10, "assoc": 0, "drop": ["KSIZ", "KWDA"]}),
+] + [
+    (wd_skill_edid(name), f"Withdrawal: {name}", f"{name} changed by <mag> in withdrawal.", T_FORT_STAMINA,
+     {"av": av, "assoc": 0, "hide": True, "drop": ["KSIZ", "KWDA"]})
+    for name, av in SKILLS
 ]
 
 # Plain-words text for the spell descriptions of effects whose magnitude is negative (<neg> is the absolute value).
 # The effect's own text (above) is what the engine shows for the effect; this is what the spell's tooltip shows.
 PLAIN = {
-    "HighrimFxRegenDown": "Stamina regenerates <neg>% slower for <dur> seconds.",
-    "HighrimAbRegenDown": "Stamina regenerates <neg>% slower.",
-    "HighrimAbStaminaDown": "Maximum stamina is <neg> points lower.",
-    "HighrimAbHealRateDown": "Health regenerates <neg>% slower.",
-    "HighrimAbSlow": "Movement is <neg>% slower.",
+    "HighrimFxRegenDown": "Stamina regeneration <neg>% slower for <dur> seconds.",
+    "HighrimAbRegenDown": "Stamina regeneration <neg>% slower.",
+    "HighrimAbStaminaDown": "Maximum stamina <neg> lower.",
+    "HighrimAbHealRateDown": "Health regeneration <neg>% slower.",
+    "HighrimAbSlow": "Movement <neg>% slower.",
+    "HighrimAbAttackSpeedUp": "Weapon attacks <pct>% faster.",
+    "HighrimFxWdRegenDown": "Stamina regeneration <neg>% slower.",
+    "HighrimFxWdStaminaDown": "Maximum stamina <neg> lower.",
+    "HighrimFxWdHealRateDown": "Health regeneration <neg>% slower.",
 }
-PLAIN["HighrimAbAllSkillsDown"] = "All of your skills are reduced by <neg> while you are in withdrawal."
-PLAIN.update({skill_edid(name): f"{name} is reduced by <neg> while you are in withdrawal." for name, _ in SKILLS})
+PLAIN["HighrimAbAllSkillsDown"] = "All skills <neg> lower in withdrawal."
+PLAIN["HighrimFxWdAllSkillsDown"] = PLAIN["HighrimAbAllSkillsDown"]
+PLAIN.update({skill_edid(name): f"{name} <neg> lower in withdrawal." for name, _ in SKILLS})
+PLAIN.update({wd_skill_edid(name): f"{name} <neg> lower in withdrawal." for name, _ in SKILLS})
 
 
 def fx(edid):
@@ -309,9 +374,10 @@ STACKS = [
      [("HighrimAbHealthUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
       ("HighrimAbMagickaUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
       ("HighrimAbStaminaUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
-      ("HighrimAbAllSkillsUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3)))]
-     + [(rush_skill_edid(name, "Ab"), tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))) for name, _ in SKILLS]),
-    ("HighrimStackVelvetHaze", "Velvet Haze Weight",
+      ("HighrimAbAllSkillsUp", tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))),
+      ("HighrimAbAttackSpeedUp", RIMERUSH_ATTACK_SPEED_STACK)]
+     + [(rush_skill_edid(name, "Ab"), tuple(RIMERUSH_STACK_BUFF * n for n in (1, 2, 3))) for name, _ in RUSH_SKILLS]),
+    ("HighrimStackVelvetHaze", "Velvet Weight",
      [("HighrimAbHealRateUp", VELVET_STACK_REGEN), ("HighrimAbCarryUp", VELVET_STACK_CARRY),
       ("HighrimAbSlow", (-8, -16, -24))]),
     ("HighrimStackDreamcap", "Dreamcap Daze",
@@ -335,11 +401,48 @@ def skill_effects(tier):
     return [effect(fx("HighrimAbAllSkillsDown"), WITHDRAWAL_SKILL_PENALTY[tier], 0)] + [effect(fx(skill_edid(name)), WITHDRAWAL_SKILL_PENALTY[tier], 0) for name, _ in SKILLS]
 
 
+TIMED_WITHDRAWAL_EFFECTS = {   # tier -> [(effect EDID, magnitude)], then the skills (all carry the tier's penalty)
+    1: [("HighrimFxWdRegenDown", -20)],
+    2: [("HighrimFxWdRegenDown", -35), ("HighrimFxWdStaminaDown", -25)],
+    3: [("HighrimFxWdRegenDown", -50), ("HighrimFxWdStaminaDown", -40), ("HighrimFxWdHealRateDown", -50)],
+}
+TIMED_WITHDRAWAL_NAMES = {1: "Withdrawal I: Cravings", 2: "Withdrawal II: Shakes", 3: "Withdrawal III: Sickness"}
+TIMED_VARIANTS = len(TIMED_VARIANT_SECONDS)
+
+
+def timed_addicted_edid(key, variant=None):
+    return f"HighrimTimedAddicted{key}" + ("" if variant is None else f"V{variant}")
+
+
+def timed_withdrawal_edid(tier, variant=None):
+    return f"HighrimTimedWithdrawal{tier}" + ("" if variant is None else f"V{variant}")
+
+
+def timed_defs():
+    """The timed spells: base (placeholder duration, the plugin sets the live one) and variants V0.. (fixed real seconds)."""
+    out = []
+    for variant in [None] + list(range(TIMED_VARIANTS)):
+        secs = TIMED_PLACEHOLDER_SECONDS if variant is None else TIMED_VARIANT_SECONDS[variant]
+        for key, name in DRUG_NAMES.items():
+            out.append((timed_addicted_edid(key, variant), f"Addicted: {name}", "spell", [effect(fx("HighrimFxAddicted"), 0, secs)]))
+        for tier in (1, 2, 3):
+            pen = WITHDRAWAL_SKILL_PENALTY[tier]
+            effects = [effect(fx(edid), mag, secs) for edid, mag in TIMED_WITHDRAWAL_EFFECTS[tier]]
+            effects += [effect(fx("HighrimFxWdAllSkillsDown"), pen, secs)] + [effect(fx(wd_skill_edid(n)), pen, secs) for n, _ in SKILLS]
+            out.append((timed_withdrawal_edid(tier, variant), TIMED_WITHDRAWAL_NAMES[tier], "spell", effects))
+    return out
+
+
 def spell_defs():
     """(EDID, name, kind, effects) with kind 'ability' or 'spell'."""
     return [
+        # Task 18: the ravage spell; its three magnitudes are 0 here, the plugin writes them before every cast.
+        ("HighrimRavage", "Withdrawal Drain", "spell",
+         [effect(fx("HighrimFxRavageHealth"), 0, RAVAGE_SECONDS), effect(fx("HighrimFxRavageMagicka"), 0, RAVAGE_SECONDS),
+          effect(fx("HighrimFxRavageStamina"), 0, RAVAGE_SECONDS)]),
+    ] + timed_defs() + [
         ("HighrimComedownRimerush", "Rimerush Crash", "spell", [effect(fx("HighrimFxRegenDown"), -60, 60)]),
-        ("HighrimComedownVelvetHaze", "Velvet Haze Crash", "spell", [effect(fx("HighrimFxRegenDown"), -40, 60)]),
+        ("HighrimComedownVelvetHaze", "Velvet Crash", "spell", [effect(fx("HighrimFxRegenDown"), -40, 60)]),
         ("HighrimComedownDreamcap", "Dreamcap Crash", "spell", [effect(DRUGGED_EFFECT, 0, 60)]),
         ("HighrimWithdrawal1", "Withdrawal I: Cravings", "ability",
          [effect(fx("HighrimAbRegenDown"), -20, 0)] + skill_effects(1)),
@@ -364,14 +467,19 @@ def spell_defs():
 
 # Spell descriptions that say more than the effect texts do (everything else is built from the effects' texts).
 SPELL_EXTRA = {
-    "HighrimWithdrawal2": " Your vision blurs now and then.",
-    "HighrimWithdrawal3": " Your vision blurs now and then.",
-    "HighrimHangover": " Your vision blurs now and then. Lasts one game day.",
+    "HighrimWithdrawal2": " Vision blurs now and then.",
+    "HighrimWithdrawal3": " Vision blurs now and then.",
+    "HighrimHangover": " Vision blurs now and then. Lasts one game day.",
 }
-SPELL_TEXT = {"HighrimShaky": "Speech and Sneak are 0 while you are high on Velvet Haze or Dreamcap."}
+SPELL_EXTRA.update({timed_withdrawal_edid(t, v): SPELL_EXTRA[f"HighrimWithdrawal{t}"] for t in (2, 3)
+                    for v in [None] + list(range(TIMED_VARIANTS))})
+SPELL_TEXT = {"HighrimShaky": "Speech and Sneak are 0 while high."}
 SPELL_TEXT.update({f"HighrimAddicted{key}": ADDICTED_TEXT.format(drug=name) for key, name in DRUG_NAMES.items()})
 SPELL_TEXT.update({f"HighrimOverdose{key}": desc for key, _, desc in OVERDOSE_TIERS})
-SPELL_TEXT.update({f"HighrimLostGear{hold}": f"A hazy memory: the guards in {CAPITALS[hold]} may have your things." for hold in HOLDS})
+SPELL_TEXT.update({timed_addicted_edid(key, v): ADDICTED_TIMED_TEXT.format(drug=name) for key, name in DRUG_NAMES.items()
+                   for v in [None] + list(range(TIMED_VARIANTS))})
+SPELL_TEXT["HighrimRavage"] = "Withdrawal lowers your maximum health, magicka and stamina."
+SPELL_TEXT.update({f"HighrimLostGear{hold}": f"The guards in {CAPITALS[hold]} may have your things." for hold in HOLDS})
 
 
 def drug_defs():
@@ -382,8 +490,9 @@ def drug_defs():
          [effect(fx("HighrimFxRushHealth"), RIMERUSH_BUFF, high),
           effect(fx("HighrimFxRushMagicka"), RIMERUSH_BUFF, high),
           effect(fx("HighrimFxRimerushStamina"), RIMERUSH_BUFF, high),
-          effect(fx("HighrimFxAllSkillsUp"), RIMERUSH_BUFF, high)]
-         + [effect(fx(rush_skill_edid(name, "Fx")), RIMERUSH_BUFF, high) for name, _ in SKILLS]
+          effect(fx("HighrimFxAllSkillsUp"), RIMERUSH_BUFF, high),
+          effect(fx("HighrimFxRushAttackSpeed"), RIMERUSH_ATTACK_SPEED, high)]
+         + [effect(fx(rush_skill_edid(name, "Fx")), RIMERUSH_BUFF, high) for name, _ in RUSH_SKILLS]
          + [effect(fx("HighrimFxHighlyAddictive"), 0, high)]),
         ("HighrimVelvetHaze", "Velvet Haze", 55,
          [effect(fx("HighrimFxVelvetSlow"), VELVET_BASE["slow"], high),
@@ -406,7 +515,10 @@ KEYWORD_EDID = "HighrimDrug"
 SPELL_EDIDS = ["HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimComedownDreamcap",
                "HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover",
                "HighrimBlurPulse"] + STACK_EDIDS + [f"HighrimLostGear{hold}" for hold in HOLDS] + [
-    "HighrimShaky"] + [f"HighrimAddicted{key}" for key in DRUG_NAMES] + [f"HighrimOverdose{key}" for key, _, _ in OVERDOSE_TIERS]
+    "HighrimShaky"] + [f"HighrimAddicted{key}" for key in DRUG_NAMES] + [f"HighrimOverdose{key}" for key, _, _ in OVERDOSE_TIERS] + [
+    "HighrimRavage"] + [timed_addicted_edid(key) for key in DRUG_NAMES] + [timed_withdrawal_edid(t) for t in (1, 2, 3)] + [
+    timed_addicted_edid(key, v) for v in range(TIMED_VARIANTS) for key in DRUG_NAMES] + [
+    timed_withdrawal_edid(t, v) for v in range(TIMED_VARIANTS) for t in (1, 2, 3)]
 NOTE_EDIDS = ["HighrimNote" + hold for hold in HOLDS]
 ALCH_EDIDS = ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"]
 COBJ_EDIDS = [r[0] for r in RECIPES]
@@ -534,8 +646,8 @@ def effect_subs(effects):
 
 
 # Text for vanilla effects we reuse that have no description of their own.
-VANILLA_EFFECT_TEXT = {DRUGGED_EFFECT: "Your vision swims and blurs for <dur> seconds.",
-                       INVISIBILITY_EFFECT: "You are invisible for <dur> seconds."}
+VANILLA_EFFECT_TEXT = {DRUGGED_EFFECT: "Your vision blurs for <dur> seconds.",
+                       INVISIBILITY_EFFECT: "Invisible for <dur> seconds."}
 
 
 def spell_description(effects):
@@ -545,14 +657,15 @@ def spell_description(effects):
     for name, _, description, _, _ in MGEFS:
         texts[ids[name]] = PLAIN.get(name, description)
     texts.update(VANILLA_EFFECT_TEXT)
-    skill_ids = {ids[skill_edid(name)] for name, _ in SKILLS}
+    skill_ids = {ids[skill_edid(name)] for name, _ in SKILLS} | {ids[wd_skill_edid(name)] for name, _ in SKILLS}
     rush_ids = {ids[rush_skill_edid(name, "Ab")] for name, _ in SKILLS}
     parts = []
     for item in effects:
         if item["mgef"] in rush_ids or item["mgef"] in skill_ids:
             continue  # hidden in the UI: the descriptor effect ("All Skills Boosted / Reduced") says it once
         text = texts.get(item["mgef"], "")
-        text = (text.replace("<neg>", f"{abs(item['mag']):g}").replace("<mag>", f"{item['mag']:g}")
+        text = (text.replace("<neg>", f"{abs(item['mag']):g}").replace("<pct>", f"{round(item['mag'] * 100):g}")
+                .replace("<mag>", f"{item['mag']:g}")
                 .replace("<dur>", str(item["dur"])).replace("<area>", str(item["area"])))
         text = text.replace(" for 0 seconds", "")
         if text and text not in parts:
@@ -749,6 +862,14 @@ def forms_header(forms):
     ]
     for name, local in forms:
         lines.append(f"    inline constexpr std::uint32_t {name} = 0x{local:06X};")
+    lines += ["", "    // Timed addiction / withdrawal spells: [drug or tier - 1][0 = the base spell, 1..N = its fixed-length variants V0..]."]
+    lines.append(f"    inline constexpr int kTimedVariantCount = {TIMED_VARIANTS};")
+    for label, names in (("kTimedAddicted", [lambda v, k=key: timed_addicted_edid(k, v) for key in DRUG_NAMES]),
+                         ("kTimedWithdrawal", [lambda v, t=tier: timed_withdrawal_edid(t, v) for tier in (1, 2, 3)])):
+        rows = []
+        for namer in names:
+            rows.append("{ " + ", ".join(f"0x{ids[namer(v)] & 0xFFFFFF:06X}" for v in [None] + list(range(TIMED_VARIANTS))) + " }")
+        lines.append(f"    inline constexpr std::uint32_t {label}[3][{TIMED_VARIANTS + 1}] = {{ " + ", ".join(rows) + " };")
     lines += ["", "    // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers (Velvet Haze uses HighrimImodVelvet)."]
     for name, formid in IMODS:
         lines.append(f"    inline constexpr std::uint32_t {name} = 0x{formid:06X};")

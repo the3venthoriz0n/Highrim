@@ -86,5 +86,20 @@ class SourceTests(unittest.TestCase):
                 self.assertNotRegex(text, rf"LookupForm(Raw)?<RE::{base}>", f"{os.path.basename(path)}: LookupForm<RE::{base}> never matches")
 
 
+    def test_task18_timed_and_ravage_ids_are_in_forms_h(self):
+        header = read("Forms.h")
+        withdrawal = read("Withdrawal.cpp")
+        for name in ("kTimedAddicted", "kTimedWithdrawal", "kTimedVariantCount"):
+            self.assertIn(name, header)
+            self.assertIn(f"Forms::{name}", withdrawal)
+        self.assertIn("HighrimRavage", forms())
+        self.assertIn("Forms::HighrimRavage", withdrawal)
+        self.assertIn("kDrainUsesRavage", read("Core.h"))
+
+    def test_rimerush_has_no_high_screen_effect(self):
+        self.assertNotIn("kImodStimulant", read("Doses.cpp") + read("Forms.h"))
+        self.assertIn("Core::HasHighVisual(type)", read("Doses.cpp"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

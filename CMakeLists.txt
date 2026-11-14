@@ -37,6 +37,8 @@ set(PROJECT_SOURCES
     src/Withdrawal.cpp
     src/Diag.h
     src/Diag.cpp
+    src/Timed.h
+    src/Timed.cpp
     src/LostGear.h
     src/LostGear.cpp
 )

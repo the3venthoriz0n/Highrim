@@ -78,7 +78,8 @@ namespace Highrim::Doses
             { Forms::HighrimStackVelvetHaze1, Forms::HighrimStackVelvetHaze2, Forms::HighrimStackVelvetHaze3 },
             { Forms::HighrimStackDreamcap1, Forms::HighrimStackDreamcap2, Forms::HighrimStackDreamcap3 },
         } };
-        constexpr std::array<std::uint32_t, 3> kImodIds{ Forms::kImodStimulant, 0u /* Velvet Haze: our own IMAD, see LookupImod */, Forms::kImodHallucinogen };
+        // Rimerush (index 0) has no screen effect during the high (Task 18, Core::HasHighVisual); Velvet Haze uses our own IMAD, see LookupImod.
+        constexpr std::array<std::uint32_t, 3> kImodIds{ 0u, 0u, Forms::kImodHallucinogen };
 
         double RealSeconds()
         {
@@ -363,6 +364,7 @@ namespace Highrim::Doses
 
         void TriggerVisual(Core::DrugType type, double strength)
         {
+            if (!Core::HasHighVisual(type)) return;  // Rimerush: no screen effect while high
             auto* imod = LookupImod(type);
             if (!imod) {
                 spdlog::error("Visual: image space modifier for {} not found", DrugName(type));
@@ -657,8 +659,10 @@ namespace Highrim::Doses
             } else {
                 g_wantedLevel[i] = level;
             }
-            g_strength[i]  = strength;
-            g_visualDue[i] = RealSeconds();  // first trigger on the next tick
+            g_strength[i] = strength;
+            if (Core::HasHighVisual(type)) {
+                g_visualDue[i] = RealSeconds();  // first trigger on the next tick (Rimerush has none)
+            }
         }
 
         class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent>

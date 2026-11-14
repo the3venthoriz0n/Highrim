@@ -43,27 +43,24 @@ namespace Highrim::Forms
     inline constexpr std::uint32_t HighrimRecipeVelvetHaze = 0x00081F;
     inline constexpr std::uint32_t HighrimRecipeDreamcap = 0x000820;
     inline constexpr std::uint32_t Highrim_MCM = 0x000D62;
-    inline constexpr std::uint32_t HighrimFxDetectEnemyOut = 0x000D63;
-    inline constexpr std::uint32_t HighrimFxDetectEnemyIn = 0x000D64;
-    inline constexpr std::uint32_t HighrimFxDetectFriendOut = 0x000D65;
-    inline constexpr std::uint32_t HighrimFxDetectFriendIn = 0x000D66;
-    inline constexpr std::uint32_t HighrimAbSpeedUp = 0x000D67;
-    inline constexpr std::uint32_t HighrimAbStaminaUp = 0x000D68;
-    inline constexpr std::uint32_t HighrimAbRegenUp = 0x000D69;
-    inline constexpr std::uint32_t HighrimAbResistUp = 0x000D6A;
-    inline constexpr std::uint32_t HighrimAbSlow = 0x000D6B;
-    inline constexpr std::uint32_t HighrimStackRimerush1 = 0x000D6C;
-    inline constexpr std::uint32_t HighrimStackRimerush2 = 0x000D6D;
-    inline constexpr std::uint32_t HighrimStackRimerush3 = 0x000D6E;
-    inline constexpr std::uint32_t HighrimStackVelvetHaze1 = 0x000D6F;
-    inline constexpr std::uint32_t HighrimStackVelvetHaze2 = 0x000D70;
-    inline constexpr std::uint32_t HighrimStackVelvetHaze3 = 0x000D71;
-    inline constexpr std::uint32_t HighrimStackDreamcap1 = 0x000D72;
-    inline constexpr std::uint32_t HighrimStackDreamcap2 = 0x000D73;
-    inline constexpr std::uint32_t HighrimStackDreamcap3 = 0x000D74;
+    inline constexpr std::uint32_t HighrimFxDetectLife = 0x000D63;
+    inline constexpr std::uint32_t HighrimAbSpeedUp = 0x000D64;
+    inline constexpr std::uint32_t HighrimAbStaminaUp = 0x000D65;
+    inline constexpr std::uint32_t HighrimAbRegenUp = 0x000D66;
+    inline constexpr std::uint32_t HighrimAbResistUp = 0x000D67;
+    inline constexpr std::uint32_t HighrimAbSlow = 0x000D68;
+    inline constexpr std::uint32_t HighrimStackRimerush1 = 0x000D69;
+    inline constexpr std::uint32_t HighrimStackRimerush2 = 0x000D6A;
+    inline constexpr std::uint32_t HighrimStackRimerush3 = 0x000D6B;
+    inline constexpr std::uint32_t HighrimStackVelvetHaze1 = 0x000D6C;
+    inline constexpr std::uint32_t HighrimStackVelvetHaze2 = 0x000D6D;
+    inline constexpr std::uint32_t HighrimStackVelvetHaze3 = 0x000D6E;
+    inline constexpr std::uint32_t HighrimStackDreamcap1 = 0x000D6F;
+    inline constexpr std::uint32_t HighrimStackDreamcap2 = 0x000D70;
+    inline constexpr std::uint32_t HighrimStackDreamcap3 = 0x000D71;
+    inline constexpr std::uint32_t HighrimImodVelvet = 0x000D72;
 
-    // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers, one per drug type.
+    // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers (Velvet Haze uses HighrimImodVelvet).
     inline constexpr std::uint32_t kImodStimulant = 0x10C761;
-    inline constexpr std::uint32_t kImodDepressant = 0x031060;
     inline constexpr std::uint32_t kImodHallucinogen = 0x0C1966;
 }

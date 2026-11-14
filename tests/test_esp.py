@@ -32,7 +32,7 @@ EXPECTED_EDIDS = {
     "MGEF": [
         "HighrimFxRimerushSpeed", "HighrimFxRimerushStamina", "HighrimFxRimerushRegen",
         "HighrimFxVelvetResist", "HighrimFxVelvetSlow", "HighrimFxRegenDown",
-        "HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn", "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn",
+        "HighrimFxDetectLife",
         "HighrimAbRegenDown", "HighrimAbStaminaDown", "HighrimAbHealRateDown",
         "HighrimAbSpeedUp", "HighrimAbStaminaUp", "HighrimAbRegenUp", "HighrimAbResistUp", "HighrimAbSlow",
     ],
@@ -44,6 +44,7 @@ EXPECTED_EDIDS = {
     "BOOK": ["HighrimNote" + hold for hold in HOLDS],
     "ALCH": ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"],
     "COBJ": ["HighrimRecipeRimerush", "HighrimRecipeVelvetHaze", "HighrimRecipeDreamcap"],
+    "IMAD": ["HighrimImodVelvet"],
     "QUST": ["Highrim_MCM"],
 }
 ALL_EDIDS = {edid for group in EXPECTED_EDIDS.values() for edid in group}
@@ -219,6 +220,14 @@ def vanilla_types(path):
     return out
 
 
+def read_template_imad():
+    """Subrecords of the vanilla ParalyzeMassImod as stored in tools/vanilla_templates.json."""
+    with open(os.path.join(ROOT, "tools", "vanilla_templates.json"), encoding="utf-8") as handle:
+        raw = json.load(handle)["00031060"]
+    assert raw["type"] == "IMAD"
+    return {tag: bytes.fromhex(data) for tag, data in raw["subs"]}
+
+
 def run_generator(out_esp, out_header):
     subprocess.run([sys.executable, "-I", GENERATOR, out_esp, out_header], check=True, cwd=tempfile.gettempdir())
 
@@ -371,22 +380,57 @@ class EspTests(unittest.TestCase):
             self.assertEqual(len(enit), 20)
             self.assertTrue(alch.first("FULL").endswith(b"\0"))
 
-    def test_dreamcap_detect_life_effects_show_one_description(self):
+    def test_dreamcap_has_one_unconditional_detect_life_effect(self):
         dreamcap = self.edid["HighrimDreamcap"]
-        fxs = [self.edid[e] for e in ("HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn",
-                                      "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn")]
-        described = [f for f in fxs if f.get("DNAM")]
-        self.assertEqual(len(described), 1, "exactly one Detect Life effect carries description text")
-        self.assertTrue(described[0].first("DNAM").strip(bytes(1)))
-        for f in fxs:
-            self.assertEqual(struct.unpack_from("<I", f.first("DATA"), 64)[0], 19, "Detect Life archetype")
-            self.assertEqual(len(f.get("CTDA")), 6, "vanilla MGEF conditions kept")
-        # The potion uses our four copies once each (plus the sleeping tree effect), with the vanilla conditions.
+        fx = self.edid["HighrimFxDetectLife"]
+        self.assertTrue(fx.first("DNAM").strip(bytes(1)), "carries the description text")
+        self.assertEqual(struct.unpack_from("<I", fx.first("DATA"), 64)[0], 19, "Detect Life archetype")
+        self.assertEqual(fx.get("CTDA"), [], "no MGEF conditions: nothing that can differ by player")
         efids = [struct.unpack("<I", raw)[0] for raw in dreamcap.get("EFID")]
-        self.assertEqual(efids[1:], [self.edid[e].formid for e in (
-            "HighrimFxDetectEnemyOut", "HighrimFxDetectEnemyIn", "HighrimFxDetectFriendOut", "HighrimFxDetectFriendIn")])
-        self.assertEqual(len(set(efids)), len(efids), "no effect listed twice")
-        self.assertEqual(len(dreamcap.get("CTDA")), 4)
+        self.assertEqual(efids[1:], [fx.formid], "one Detect Life effect, used once (plus the sleeping tree effect)")
+        self.assertEqual(dreamcap.get("CTDA"), [], "no per-effect conditions (hostility / interior)")
+        area = struct.unpack("<fII", dreamcap.get("EFIT")[1])[1]
+        self.assertGreaterEqual(area, 100)
+
+    def test_every_custom_effect_and_spell_has_a_description(self):
+        for record in self.plugin.by_type("MGEF"):
+            self.assertTrue(record.first("DNAM").strip(bytes(1)), f"{record.edid} has no description")
+        for record in self.plugin.by_type("SPEL"):
+            text = record.first("DESC").strip(bytes(1)).decode("ascii")
+            self.assertGreater(len(text), len(record.first("FULL").strip(bytes(1))), f"{record.edid} description is just its name")
+            self.assertNotIn("<", text, f"{record.edid}: tokens must be filled in")
+        self.assertIn(b"60", self.edid["HighrimComedownRimerush"].first("DESC"))
+
+    def test_detrimental_effects_are_not_flagged_hostile_or_detrimental(self):
+        # Cure Disease and other dispels: our comedown, withdrawal and hangover effects carry no Hostile (0x1) or
+        # Detrimental (0x4) flag and no harmful keyword; they are negative-magnitude Fortify style effects.
+        for edid in ("HighrimFxRegenDown", "HighrimAbRegenDown", "HighrimAbStaminaDown", "HighrimAbHealRateDown", "HighrimAbSlow"):
+            flags = struct.unpack_from("<I", self.edid[edid].first("DATA"), 0)[0]
+            self.assertEqual(flags & 0x5, 0, f"{edid} flags {flags:#x}")
+            self.assertFalse(self.edid[edid].get("KWDA"), edid)
+        for edid in ("HighrimComedownRimerush", "HighrimComedownVelvetHaze", "HighrimWithdrawal1", "HighrimWithdrawal2",
+                     "HighrimWithdrawal3", "HighrimHangover"):
+            for efit in self.edid[edid].get("EFIT"):
+                if edid.startswith("HighrimComedown") or edid.startswith("HighrimWith"):
+                    pass
+            mags = [struct.unpack("<f", e[:4])[0] for e in self.edid[edid].get("EFIT")]
+            self.assertTrue(all(m < 0 for m in mags), f"{edid} magnitudes must be negative: {mags}")
+        self.assertEqual(struct.unpack_from("<I", self.edid["HighrimAbHealRateDown"].first("DATA"), 68)[0], 0x9B)
+
+    def test_velvet_haze_imad_has_no_blur_but_keeps_colour(self):
+        mine = self.edid["HighrimImodVelvet"]
+        self.assertEqual(mine.type, "IMAD")
+        self.assertEqual(mine.first("DNAM")[:8], read_template_imad()["DNAM"][:8])
+        vanilla = read_template_imad()
+        for tag in ("BNAM", "VNAM", "RNAM", "SNAM", "UNAM", "NAM1", "NAM2", "WNAM", "XNAM", "YNAM", "NAM4"):
+            data = mine.first(tag)
+            floats = struct.unpack(f"<{len(data) // 4}f", data)
+            self.assertTrue(all(v == 0.0 for v in floats[1::2]), f"{tag} still has non-zero values")
+            self.assertEqual(len(data), len(vanilla[tag]), f"{tag} key count must be unchanged")
+        self.assertGreater(max(struct.unpack(f"<{len(vanilla['BNAM']) // 4}f", vanilla["BNAM"])[1::2]), 0, "source had blur")
+        for tag, data in vanilla.items():
+            if tag not in ("EDID", "BNAM", "VNAM", "RNAM", "SNAM", "UNAM", "NAM1", "NAM2", "WNAM", "XNAM", "YNAM", "NAM4"):
+                self.assertEqual(mine.first(tag), data, f"{tag} (colour, tint, saturation) must match the source")
 
     def test_withdrawal_and_hangover_are_abilities_comedowns_are_spells(self):
         for edid in ("HighrimWithdrawal1", "HighrimWithdrawal2", "HighrimWithdrawal3", "HighrimHangover"):
@@ -410,7 +454,7 @@ class EspTests(unittest.TestCase):
             spell = self.edid[f"HighrimWithdrawal{n}"]
             for efid, efit in zip(spell.get("EFID"), spell.get("EFIT")):
                 if struct.unpack("<I", efid)[0] == regen_down:
-                    mags.append(struct.unpack("<f", efit[:4])[0])
+                    mags.append(abs(struct.unpack("<f", efit[:4])[0]))
         self.assertEqual(mags, sorted(set(mags)))
         self.assertEqual(len(mags), 3)
 
@@ -480,7 +524,7 @@ class EspTests(unittest.TestCase):
         text = read_text(self.hdr)
         found = dict(re.findall(r"constexpr\s+std::uint32_t\s+(\w+)\s*=\s*0x([0-9A-Fa-f]+);", text))
         imods = {k: v.upper().zfill(6) for k, v in found.items() if k.startswith("kImod")}
-        self.assertEqual(len(imods), 3, "one vanilla screen effect per drug type")
+        self.assertEqual(len(imods), 2, "vanilla screen effects for Rimerush and Dreamcap (Velvet Haze has its own IMAD)")
         own = {k: v for k, v in found.items() if not k.startswith("kImod")}
         expected = {r.edid: f"{r.formid & 0xFFFFFF:06X}" for r in self.plugin.records}
         self.assertEqual({k: v.upper() for k, v in own.items()}, expected)

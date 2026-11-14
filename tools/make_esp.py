@@ -12,8 +12,8 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
   KYWD  HighrimDrug                                 keyword on all three drugs (for the later dealer feature)
   MGEF  HighrimFxRimerushSpeed / Stamina / Regen    Rimerush effects (clones of potion effects)
         HighrimFxVelvetResist / VelvetSlow          Velvet Haze effects
-        HighrimFxDetectEnemyOut / EnemyIn / FriendOut / FriendIn   Detect Life copies (description on one only)
-        HighrimFxRegenDown                          stamina regen drain, shared by comedowns (potion clone)
+        HighrimFxDetectLife                         one Detect Life effect with no conditions (works for every player)
+        HighrimFxRegenDown                          stamina regen change, shared by comedowns (non-detrimental clone, negative magnitude)
         HighrimAbRegenDown / AbStaminaDown / AbHealRateDown   constant-effect clones for withdrawal/hangover
         HighrimAbSpeedUp / AbStaminaUp / AbRegenUp / AbResistUp / AbSlow   constant-effect clones for the dose stacks
   SPEL  HighrimComedownRimerush / VelvetHaze / Dreamcap   60 s fire-and-forget spells the plugin casts at the end of a high
@@ -21,6 +21,7 @@ new ones are allocated in this order after the highest pinned ID, see allocate_i
         HighrimHangover                             ability the plugin adds after a blackout and removes after a game day
         HighrimStack<Rimerush|VelvetHaze|Dreamcap>1..3   dose stack abilities (type Ability), one at a time per drug
         HighrimBlurPulse                            8 s blur the plugin casts now and then (withdrawal tier 2, hangover)
+  IMAD  HighrimImodVelvet                           Velvet Haze screen effect: ParalyzeMassImod with the blur tracks zeroed
   BOOK  HighrimNote<Hold>                           nine notes: Whiterun Eastmarch Rift Haafingar Hjaalmarch Reach
                                                     Falkreath Pale Winterhold
   ALCH  HighrimRimerush / HighrimVelvetHaze / HighrimDreamcap
@@ -56,34 +57,32 @@ MAGIC_ALCH_BENEFICIAL = 0x000F8A4E
 # Screen effects the plugin triggers itself (vanilla IMAD records in Skyrim.esm), one per drug type. Picked by
 # name only; what they look like in game is unverified. Candidates considered are listed in the README.
 IMOD_STIMULANT = 0x0010C761     # QuickReflexesImod: adrenaline rush (bright, contrasty)
-IMOD_DEPRESSANT = 0x00031060    # ParalyzeMassImod: heavy blur and drained colour
+IMOD_DEPRESSANT_SOURCE = 0x00031060  # ParalyzeMassImod: Velvet Haze's own IMAD (HighrimImodVelvet) is cloned from it
 IMOD_HALLUCINOGEN = 0x000C1966  # DA13PeryiteVisionImod: strong tinted vision
-IMODS = [("kImodStimulant", IMOD_STIMULANT), ("kImodDepressant", IMOD_DEPRESSANT),
-         ("kImodHallucinogen", IMOD_HALLUCINOGEN)]
+IMODS = [("kImodStimulant", IMOD_STIMULANT), ("kImodHallucinogen", IMOD_HALLUCINOGEN)]
+IMAD_VELVET = "HighrimImodVelvet"
+# IMAD subrecords that hold blur: blur radius, double vision, radial blur strength / ramp up / ramp down / start /
+# rotation, depth of field strength / distance / range, motion blur. Each is a list of (time, value) float pairs; the
+# values are zeroed and the times and key counts (DNAM) are left alone. Colour tracks (tint, saturation, contrast) stay.
+IMAD_BLUR_TAGS = ["BNAM", "VNAM", "RNAM", "SNAM", "UNAM", "NAM1", "NAM2", "WNAM", "XNAM", "YNAM", "NAM4"]
 DRUGGED_EFFECT = 0x000E3CBB   # dunSleepingTreeDruggedAlch: the sleeping tree sap trip (script driven image space)
-# The four Detect Life effects the vanilla Detect Life scroll (TGDetectLifeScroll) uses, with its areas
-# and per-effect condition (CTDA, copied byte for byte from that scroll).
-CTDA_ENEMY = bytes.fromhex("2000000000000000cf02000000000000000000000000000000000000ffffffff")
-CTDA_FRIEND = bytes.fromhex("0000000000000000cf02000000000000000000000000000000000000ffffffff")
-# Our own copies of the four vanilla MGEFs (see MGEFS): the vanilla Interior ones carry a description string
-# and the Exterior ones none, which made the potion tooltip repeat the text. Each copy keeps the vanilla
-# MGEF conditions (interior/exterior, not undead/daedra/construct) untouched.
-DETECT_LIFE = [  # (our MGEF EDID, area in feet, condition)
-    ("HighrimFxDetectEnemyOut", 200, CTDA_ENEMY),
-    ("HighrimFxDetectEnemyIn", 100, CTDA_ENEMY),
-    ("HighrimFxDetectFriendOut", 200, CTDA_FRIEND),
-    ("HighrimFxDetectFriendIn", 100, CTDA_FRIEND),
-]
+# One Detect Life effect of our own, a copy of the vanilla exterior one (DetectLifeEnemyExteriorSelfFF) with every
+# condition removed. The vanilla scroll uses four effects: per-effect conditions IsHostileToActor (enemy / friend split,
+# which depends on the player's relations) and IsInInterior (area 100 / 200 ft), plus target filters (undead, daedra,
+# dwarven, NoDetectLife, IsUndead). A condition that fails for one player but not another means no detection for that
+# player, so none are kept: one effect, one area, same for everybody. Undead, daedra and constructs now show too.
+DETECT_LIFE_AREA = 150
 DETECT_LIFE_TEXT = "Living creatures and people are visible through walls within <area> feet for <dur> seconds."
 
 # Template form IDs (see tools/extract_templates.py).
-T_FORT_STAMINA, T_FORT_STAMINA_RATE, T_SAP_SLOW, T_DMG_STAMINA_RATE = "0003EAF9", "0003EB08", "000E3CBA", "00073F2C"
-T_AB_DMG_STAMINA_RATE, T_AB_FORT_STAMINA, T_AB_DMG_HEAL_RATE = "000C1E8D", "00091F77", "0010DE1A"
+T_FORT_STAMINA, T_FORT_STAMINA_RATE, T_SAP_SLOW = "0003EAF9", "0003EB08", "000E3CBA"
+T_AB_FORT_STAMINA = "00091F77"
 T_ALCH, T_BOOK, T_ABILITY, T_SPELL, T_COBJ, T_KYWD = "00057A7A", "000E1A9F", "0010FB30", "0005AD5C", "000F431F", "0008CDEC"
 
 ACTOR_VALUE_SPEED_MULT = 30
 ACTOR_VALUE_DAMAGE_RESIST = 39
 ACTOR_VALUE_STAMINA_RATE = 0x9D   # the value AbDamageStaminaRate and AlchFortifyStaminaRate change
+ACTOR_VALUE_HEAL_RATE = 0x9B      # the value VampireAbDamageHealRate changes
 
 # Dose stacks: stack abilities come in levels 1..3 (stack 2, 3, 4 and beyond), on top of the potion's own effects.
 STACK_LEVELS = 3
@@ -104,15 +103,17 @@ MGEFS = [
     ("HighrimFxVelvetResist", "Velvet Armor", "Armor rating is increased by <mag> for <dur> seconds.",
      T_FORT_STAMINA, {"av": ACTOR_VALUE_DAMAGE_RESIST, "assoc": 0, "keywords": [MAGIC_ALCH_BENEFICIAL]}),
     ("HighrimFxVelvetSlow", "Velvet Drag", "Movement is slowed by <mag>% for <dur> seconds.", T_SAP_SLOW, {}),
-    ("HighrimFxRegenDown", "Slowed Recovery", "Stamina regenerates <mag>% slower for <dur> seconds.",
-     T_DMG_STAMINA_RATE, {"drop": ["VMAD"]}),
-    ("HighrimFxDetectEnemyOut", "Detect Life", DETECT_LIFE_TEXT, "001019D8", {}),
-    ("HighrimFxDetectEnemyIn", "Detect Life", "", "001019D9", {"drop": ["DNAM"]}),
-    ("HighrimFxDetectFriendOut", "Detect Life", "", "001019DA", {"drop": ["DNAM"]}),
-    ("HighrimFxDetectFriendIn", "Detect Life", "", "001019DB", {"drop": ["DNAM"]}),
-    ("HighrimAbRegenDown", "Cravings", "Stamina regenerates <mag>% slower.", T_AB_DMG_STAMINA_RATE, {}),
+    # Comedown, withdrawal and hangover effects are NOT clones of the detrimental (Damage ...) effects any more:
+    # those carry the Hostile and Detrimental flags. They are Fortify-style clones with a negative magnitude, no
+    # hostile/detrimental flag and no harmful keyword (see the README on Cure Disease).
+    ("HighrimFxRegenDown", "Slowed Recovery", "Stamina regeneration is changed by <mag>% for <dur> seconds.",
+     T_FORT_STAMINA_RATE, {"drop": ["KSIZ", "KWDA"]}),
+    ("HighrimFxDetectLife", "Detect Life", DETECT_LIFE_TEXT, "001019D8", {"drop": ["CTDA"]}),
+    ("HighrimAbRegenDown", "Cravings", "Stamina regeneration is changed by <mag>%.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_STAMINA_RATE}),
     ("HighrimAbStaminaDown", "Shakes", "Stamina is changed by <mag> points.", T_AB_FORT_STAMINA, {}),
-    ("HighrimAbHealRateDown", "Slow Healing", "Health regenerates <mag>% slower.", T_AB_DMG_HEAL_RATE, {}),
+    ("HighrimAbHealRateDown", "Slow Healing", "Health regeneration is changed by <mag>%.", T_AB_FORT_STAMINA,
+     {"av": ACTOR_VALUE_HEAL_RATE}),
     # Dose stack effects: constant-effect (ability) clones of AbFortifyStamina with the actor value changed.
     ("HighrimAbSpeedUp", "Surge Speed", "Movement speed is increased by <mag>%.", T_AB_FORT_STAMINA,
      {"av": ACTOR_VALUE_SPEED_MULT}),
@@ -143,7 +144,7 @@ STACKS = [
     ("HighrimStackVelvetHaze", "Velvet Haze Weight",
      [("HighrimAbResistUp", (50, 100, 150)), ("HighrimAbSlow", (-8, -16, -24))]),
     ("HighrimStackDreamcap", "Dreamcap Daze",
-     [("HighrimAbSlow", (-5, -10, -15)), ("HighrimAbRegenDown", (15, 30, 45))]),
+     [("HighrimAbSlow", (-5, -10, -15)), ("HighrimAbRegenDown", (-15, -30, -45))]),
 ]
 ROMAN = ["I", "II", "III"]
 STACK_EDIDS = [f"{prefix}{n}" for prefix, _, _ in STACKS for n in range(1, STACK_LEVELS + 1)]
@@ -161,18 +162,18 @@ def stack_spell_defs():
 def spell_defs():
     """(EDID, name, kind, effects) with kind 'ability' or 'spell'."""
     return [
-        ("HighrimComedownRimerush", "Rimerush Comedown", "spell", [effect(fx("HighrimFxRegenDown"), 60, 60)]),
-        ("HighrimComedownVelvetHaze", "Velvet Haze Comedown", "spell", [effect(fx("HighrimFxRegenDown"), 40, 60)]),
+        ("HighrimComedownRimerush", "Rimerush Comedown", "spell", [effect(fx("HighrimFxRegenDown"), -60, 60)]),
+        ("HighrimComedownVelvetHaze", "Velvet Haze Comedown", "spell", [effect(fx("HighrimFxRegenDown"), -40, 60)]),
         ("HighrimComedownDreamcap", "Dreamcap Comedown", "spell", [effect(DRUGGED_EFFECT, 0, 60)]),
         ("HighrimWithdrawal1", "Withdrawal: Cravings", "ability",
-         [effect(fx("HighrimAbRegenDown"), 20, 0)]),
+         [effect(fx("HighrimAbRegenDown"), -20, 0)]),
         ("HighrimWithdrawal2", "Withdrawal: Shakes", "ability",
-         [effect(fx("HighrimAbRegenDown"), 35, 0), effect(fx("HighrimAbStaminaDown"), -25, 0)]),
+         [effect(fx("HighrimAbRegenDown"), -35, 0), effect(fx("HighrimAbStaminaDown"), -25, 0)]),
         ("HighrimWithdrawal3", "Withdrawal: Sickness", "ability",
-         [effect(fx("HighrimAbRegenDown"), 50, 0), effect(fx("HighrimAbStaminaDown"), -40, 0),
-          effect(fx("HighrimAbHealRateDown"), 50, 0)]),
+         [effect(fx("HighrimAbRegenDown"), -50, 0), effect(fx("HighrimAbStaminaDown"), -40, 0),
+          effect(fx("HighrimAbHealRateDown"), -50, 0)]),
         ("HighrimHangover", "Hangover", "ability",
-         [effect(fx("HighrimAbStaminaDown"), -30, 0), effect(fx("HighrimAbRegenDown"), 25, 0)]),
+         [effect(fx("HighrimAbStaminaDown"), -30, 0), effect(fx("HighrimAbRegenDown"), -25, 0)]),
         ("HighrimBlurPulse", "Blurred Vision", "spell", [effect(DRUGGED_EFFECT, 0, 8)]),
     ] + stack_spell_defs()
 
@@ -190,7 +191,7 @@ def drug_defs():
           effect(fx("HighrimFxVelvetSlow"), VELVET_BASE["slow"], high)]),
         ("HighrimDreamcap", "Dreamcap", 70,
          [effect(DRUGGED_EFFECT, 0, high)]
-         + [effect(fx(mgef), 0, high, area, [ctda]) for mgef, area, ctda in DETECT_LIFE]),
+         + [effect(fx("HighrimFxDetectLife"), 0, high, DETECT_LIFE_AREA)]),
     ]
 
 
@@ -209,7 +210,7 @@ ALCH_EDIDS = ["HighrimRimerush", "HighrimVelvetHaze", "HighrimDreamcap"]
 COBJ_EDIDS = [r[0] for r in RECIPES]
 # Group order and the order form IDs are handed out in.
 ORDER = [("KYWD", [KEYWORD_EDID]), ("MGEF", [m[0] for m in MGEFS]), ("SPEL", SPELL_EDIDS),
-         ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS)]
+         ("BOOK", NOTE_EDIDS), ("ALCH", ALCH_EDIDS), ("COBJ", COBJ_EDIDS), ("IMAD", [IMAD_VELVET])]
 
 PINNED_FILE = os.environ.get("HIGHRIM_PINNED_IDS") or os.path.join(TOOLS, "pinned_form_ids.json")
 
@@ -322,11 +323,33 @@ def effect_subs(effects):
     return out
 
 
+# Text for vanilla effects we reuse that have no description of their own.
+VANILLA_EFFECT_TEXT = {DRUGGED_EFFECT: "Your vision swims and blurs for <dur> seconds."}
+
+
+def spell_description(effects):
+    """What the spell does, in plain words, from the descriptions of its effects with the numbers filled in.
+    (The spell's own DESC is what the magic menu and tooltips show, so it must say more than the name.)"""
+    texts = {}
+    for name, _, description, _, _ in MGEFS:
+        texts[ids[name]] = description
+    texts.update(VANILLA_EFFECT_TEXT)
+    parts = []
+    for item in effects:
+        text = texts.get(item["mgef"], "")
+        text = (text.replace("<mag>", f"{item['mag']:g}").replace("<dur>", str(item["dur"]))
+                .replace("<area>", str(item["area"])))
+        text = text.replace(" for 0 seconds", "")
+        if text and text not in parts:
+            parts.append(text)
+    return " ".join(parts)
+
+
 def build_spell(edid, name, kind, effects):
     subs = template(T_ABILITY, "SPEL")
     replace(subs, "EDID", esp.zstr(edid))
     replace(subs, "FULL", esp.zstr(name))
-    replace(subs, "DESC", esp.zstr(name))
+    replace(subs, "DESC", esp.zstr(spell_description(effects) or name))
     if kind == "ability":
         spit = struct.pack("<IIIfIIffI", 0, 0, 4, 0.0, 0, 0, 0.0, 0.0, 0)
     else:
@@ -383,6 +406,19 @@ def build_keyword(edid):
     return esp.record(b"KYWD", ids[edid], esp.join_subs(subs))
 
 
+def build_imad(edid):
+    """Velvet Haze screen effect: ParalyzeMassImod (saturation, contrast, tint kept) without any blur."""
+    subs = template(format(IMOD_DEPRESSANT_SOURCE, "08X"), "IMAD")
+    replace(subs, "EDID", esp.zstr(edid))
+    for tag in IMAD_BLUR_TAGS:
+        data = dict(subs)[tag]
+        assert len(data) % 8 == 0, tag
+        floats = list(struct.unpack(f"<{len(data) // 4}f", data))
+        floats[1::2] = [0.0] * len(floats[1::2])
+        replace(subs, tag, struct.pack(f"<{len(floats)}f", *floats))
+    return esp.record(b"IMAD", ids[edid], esp.join_subs(subs))
+
+
 def build_mcm_quest(mod_name):
     """The MCM Helper registration quest, byte for byte what tools/make_mcm_plugin.py wrote in Task 1."""
     quest_id = MCM_QUEST_ID  # master index 1 (this plugin), light-plugin local id 0xD62
@@ -422,6 +458,7 @@ def build():
         "BOOK": [build_book("HighrimNote" + hold, hold) for hold in HOLDS],
         "ALCH": [build_alch(*drugs[e]) for e in ALCH_EDIDS],
         "COBJ": [build_cobj(*r) for r in RECIPES],
+        "IMAD": [build_imad(IMAD_VELVET)],
         "QUST": [build_mcm_quest(MOD_NAME)],
     }
     groups = [esp.group(rtype.encode("ascii"), records[rtype]) for rtype in
@@ -449,7 +486,7 @@ def forms_header(forms):
     ]
     for name, local in forms:
         lines.append(f"    inline constexpr std::uint32_t {name} = 0x{local:06X};")
-    lines += ["", "    // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers, one per drug type."]
+    lines += ["", "    // Vanilla image space modifiers (Skyrim.esm, load order index 0) the plugin triggers (Velvet Haze uses HighrimImodVelvet)."]
     for name, formid in IMODS:
         lines.append(f"    inline constexpr std::uint32_t {name} = 0x{formid:06X};")
     lines += ["}", ""]
@@ -462,8 +499,15 @@ def main(argv):
     data, forms = build()
     with open(out_esp, "wb") as handle:
         handle.write(data)
-    with open(out_header, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(forms_header(forms))
+    text = forms_header(forms).encode("utf-8")
+    try:
+        with open(out_header, "rb") as handle:
+            unchanged = handle.read().replace(b"\r\n", b"\n") == text
+    except OSError:
+        unchanged = False
+    if not unchanged:  # an unchanged header keeps its timestamp, so the build's post-step does not make the DLL look stale
+        with open(out_header, "wb") as handle:
+            handle.write(text)
     print(f"Wrote {out_esp} ({len(data)} bytes) and {out_header} ({len(forms)} form IDs)")
 
 

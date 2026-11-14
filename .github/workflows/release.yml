@@ -27,11 +27,25 @@ jobs:
     timeout-minutes: 60
     env:
       NEXUS_KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
+
+      # vcpkg builds its dependencies from source; keep the built packages between runs. The cache is
+      # keyed on the manifest, so a dependency change rebuilds only what changed.
+      - name: Prepare the vcpkg binary cache
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
 
       - name: Tag must be on main
         if: github.ref_type == 'tag'

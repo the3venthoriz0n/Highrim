@@ -2,7 +2,7 @@ name: Release
 
 # Pushing a tag like v0.1.0 (the tagged commit must be on main, or the run stops) is all a release needs: the tag IS the version.
 # The run stamps it into CMakeLists.txt, vcpkg.json, src/main.cpp and tools/make_archive.ps1, builds the plugin on Windows, runs the tests, packages
-# dist/Highrim-<version>.zip, creates a GitHub release with it, and (when configured)
+# dist/Highrim_<version>.zip, creates a GitHub release with it, and (when configured)
 # uploads it to Nexus Mods as a new version of an existing file.
 #
 # One-time setup (see README, "Releasing"):
@@ -108,15 +108,15 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Highrim-${{ steps.ver.outputs.version }}
-          path: dist/Highrim-${{ steps.ver.outputs.version }}.zip
+          name: Highrim_${{ steps.ver.outputs.version }}
+          path: dist/Highrim_${{ steps.ver.outputs.version }}.zip
 
       - name: GitHub release
         if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$env:GITHUB_REF_NAME" "dist\Highrim-${{ steps.ver.outputs.version }}.zip" --generate-notes --title "Highrim ${{ steps.ver.outputs.version }}"
+        run: gh release create "$env:GITHUB_REF_NAME" "dist\Highrim_${{ steps.ver.outputs.version }}.zip" --generate-notes --title "Highrim_${{ steps.ver.outputs.version }}"
 
       - name: Upload to Nexus Mods
         if: github.ref_type == 'tag' && env.NEXUS_KEY != '' && vars.NEXUS_FILE_ID != ''
@@ -124,10 +124,10 @@ jobs:
         with:
           api_key: ${{ secrets.NEXUSMODS_API_KEY }}
           file_id: ${{ vars.NEXUS_FILE_ID }}
-          filename: dist/Highrim-${{ steps.ver.outputs.version }}.zip
+          filename: dist/Highrim_${{ steps.ver.outputs.version }}.zip
           version: ${{ steps.ver.outputs.version }}
-          display_name: Highrim ${{ steps.ver.outputs.version }}
-          description: Highrim ${{ steps.ver.outputs.version }}
+          display_name: Highrim_${{ steps.ver.outputs.version }}
+          description: Highrim_${{ steps.ver.outputs.version }}
           category: main
           update_mod_version: "true"
           mod_id: ${{ vars.NEXUS_MOD_ID }}

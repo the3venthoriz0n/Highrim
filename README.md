@@ -13,7 +13,7 @@ A Skyrim SE SKSE mod (version 0.1.0): three craftable cooking-pot drugs, per-dru
 
 ## Install
 
-Install `Highrim-0.1.0.zip` with a mod manager (it contains `Data/SKSE/Plugins/Highrim.dll`, `Data/Highrim.esp` and the MCM files under `Data/MCM`), enable `Highrim.esp`, and start the game. The log is `Documents\My Games\Skyrim Special Edition\SKSE\Highrim.log` and starts with `Highrim 0.1.0 loading`.
+Install `Highrim_0.1.0.zip` with a mod manager (it contains `Data/SKSE/Plugins/Highrim.dll`, `Data/Highrim.esp` and the MCM files under `Data/MCM`), enable `Highrim.esp`, and start the game. The log is `Documents\My Games\Skyrim Special Edition\SKSE\Highrim.log` and starts with `Highrim 0.1.0 loading`.
 
 ## The drugs
 
@@ -227,7 +227,7 @@ Please report which of these lines are missing or wrong.
 
     git submodule update --init --recursive
     build_release.bat      (from a VS x64 command prompt)
-    make_archive.bat       (writes dist\Highrim-0.1.0.zip)
+    make_archive.bat       (writes dist\Highrim_0.1.0.zip)
 
 Tests: `ctest --test-dir out\build-release -C Release --output-on-failure`.
 
@@ -339,7 +339,7 @@ If you already have a configured build folder (it may be a Ninja one), just run 
 
 **To release, tag `main`.** The tag is the version, you never edit version numbers by hand.
 
-1. **Make sure `main` is what you want to ship.** Merge your work, then locally: build, run the five test suites, install `dist\Highrim-<version>.zip` from `make_archive.bat`, play it, and read `Highrim.log` (no crash, the startup `Prison:` lines for every hold except Winterhold, `Dose:` lines, no unexpected errors).
+1. **Make sure `main` is what you want to ship.** Merge your work, then locally: build, run the five test suites, install `dist\Highrim_<version>.zip` from `make_archive.bat`, play it, and read `Highrim.log` (no crash, the startup `Prison:` lines for every hold except Winterhold, `Dose:` lines, no unexpected errors).
 2. **Pick the next version** (`vMAJOR.MINOR.PATCH`): patch for fixes, minor for new features. It must be higher than the version on Nexus.
 3. **Tag and push:**
 
@@ -348,7 +348,7 @@ If you already have a configured build folder (it may be a Ninja one), just run 
         git push origin v0.2.1
 
 4. **Watch it:** `gh run watch` (or the Actions tab). The first run on a fresh cache takes about 23 minutes; later runs reuse the cached vcpkg packages.
-5. **Check the result:** the run is green; the GitHub release has `Highrim-<version>.zip`; the Nexus Files tab shows the new version of the existing file (Nexus may hold a new upload briefly for scanning); `main` has a new commit "Bump version to ..." made by `github-actions[bot]`, so pull it.
+5. **Check the result:** the run is green; the GitHub release has `Highrim_<version>.zip`; the Nexus Files tab shows the new version of the existing file (Nexus may hold a new upload briefly for scanning); `main` has a new commit "Bump version to ..." made by `github-actions[bot]`, so pull it.
 
 **What the workflow does** (`.github/workflows/release.yml`, run on a Windows runner): checks the tag looks like `v1.2.3` and its commit is on `main`; stamps the version into `CMakeLists.txt`, `vcpkg.json`, `src/main.cpp` and `tools/make_archive.ps1` (it stops if any of them does not match exactly once); builds; runs the tests; runs `tools/make_archive.ps1` (which refuses a stale DLL); creates the GitHub release with the zip; uploads the zip to Nexus Mods as a new version of the existing file and posts a changelog entry pointing at the GitHub release; then commits the bumped version numbers back to `main`. The vcpkg packages are cached between runs.
 

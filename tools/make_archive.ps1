@@ -8,7 +8,7 @@ $data = Join-Path $root "package\Data"
 $dll  = Join-Path $data "SKSE\Plugins\Highrim.dll"
 $esp  = Join-Path $data "Highrim.esp"
 $dist = Join-Path $root "dist"
-$zip  = Join-Path $dist ("Highrim-{0}.zip" -f $Version)
+$zip  = Join-Path $dist ("Highrim_{0}.zip" -f $Version)
 
 if (-not (Test-Path -LiteralPath $dll)) { throw "DLL not found: $dll. Build first (build_release.bat)." }
 if (-not (Test-Path -LiteralPath $esp)) { throw "Plugin not found: $esp. Build first (build_release.bat)." }

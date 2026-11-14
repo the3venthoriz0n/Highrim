@@ -21,9 +21,12 @@ Built for the owner's Skyrim Together Reborn (STR) sessions. Everything below is
 ## Starting drugs (my call, owner agreed)
 | Type | While high | Comedown |
 |---|---|---|
-| Stimulant | faster movement, more stamina and stamina regen | stamina drain |
+| Stimulant (Rimerush, revamped in Task 15) | +10 Health, Magicka, Stamina and +10 to all 18 skills for 120 s; the most addictive (dose 40, decay 3 per day) | stamina drain, and a withdrawal that drains Health, Magicka and Stamina until a dose; a depleted bar can trigger the blackout if `bFullBlackout` allows it |
 | Depressant | damage resistance, calm, slower movement, random ragdoll knockdowns (`bRagdoll`, shorter intervals with the stack, fires regardless of combat, mount, swimming etc.) | slow, drowsy |
 | Hallucinogen | visual trip (colour, blur), Detect Life | disorientation |
+
+## Rimerush withdrawal drain and the full blackout gate (Task 15)
+Rimerush withdrawal (level >= 10, 4+ game hours since the last Rimerush dose) is plugin-driven: about once a real second Health, Magicka and Stamina are damaged by `0.96 * (0.5 + level/50) * min(3, 1 + hours/12)` per bar per second (Health floor 5, never killing) until another Rimerush dose. A depleted bar starts the standard blackout ("rimerush withdrawal") only when `bFullBlackout` (default OFF) and `bRimerushWithdrawalBlackout` allow it; afterwards bars go to 25% and the drain pauses 5 real minutes. `bFullBlackout` is the third, independent gate (`Blackout::FullBlackoutAllowed()`) beside `bOverdose` and `bRimerushWithdrawalBlackout`: while it is off nothing starts the full blackout (overdose, debug key, Rimerush withdrawal), the drain just rests at the floors, and no restore or pause rules run. A milder faint is a separate later task.
 
 ## Non-goals (now)
 - Chance-based blackouts, per-drug risk, addiction level affecting blackout chance (later).

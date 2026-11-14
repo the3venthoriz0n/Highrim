@@ -13,6 +13,16 @@ $zip  = Join-Path $dist ("Highrim-{0}.zip" -f $Version)
 if (-not (Test-Path -LiteralPath $dll)) { throw "DLL not found: $dll. Build first (build_release.bat)." }
 if (-not (Test-Path -LiteralPath $esp)) { throw "Plugin not found: $esp. Build first (build_release.bat)." }
 
+# A stale DLL must never be packaged (one was, and it caused a repeat crash). This runs before the plugin is
+# regenerated below, because regenerating rewrites src\Forms.h and would bump its timestamp.
+$dllItem = Get-Item -LiteralPath $dll
+$sources = @(Get-ChildItem -LiteralPath (Join-Path $root "src") -Recurse -File) + @(Get-Item -LiteralPath (Join-Path $root "CMakeLists.txt"))
+$newer = @($sources | Where-Object { $_.LastWriteTimeUtc -gt $dllItem.LastWriteTimeUtc })
+if ($newer.Count -gt 0) {
+    $names = ($newer | ForEach-Object { $_.FullName.Substring($root.Length + 1) }) -join ", "
+    throw ("STALE DLL: {0} (built {1:u}) is older than: {2}. Rebuild first (build_release.bat), then package." -f $dll, $dllItem.LastWriteTimeUtc, $names)
+}
+
 # Regenerate the plugin and run its tests; a stale or broken plugin must not be packaged.
 Push-Location $root
 try {
@@ -50,3 +60,5 @@ try {
     $archive.Dispose()
 }
 Write-Host "Created $zip"
+$sha = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+Write-Host ("Highrim.dll: SHA-256 {0}..., {1} bytes, built {2:u}" -f $sha.Substring(0, 16), $dllItem.Length, $dllItem.LastWriteTimeUtc)

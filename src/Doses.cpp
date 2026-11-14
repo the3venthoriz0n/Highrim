@@ -186,7 +186,17 @@ namespace Highrim::Doses
                 spdlog::warn("  no active effect list on the player");
             }
             const int expected = potion ? static_cast<int>(potion->effects.size()) : 0;
-            spdlog::info("Highrim effects active: {} of {} expected for {}", active, expected, DrugName(type));
+            // Task 17: effects flagged Hide in UI (the 18 per-skill ones) are still applied and still counted in `expected`.
+            int hiddenExpected = 0;
+            if (potion) {
+                for (auto* fx : potion->effects) {
+                    if (fx && fx->baseEffect && fx->baseEffect->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHideInUI)) {
+                        ++hiddenExpected;
+                    }
+                }
+            }
+            spdlog::info("Highrim effects active: {} of {} expected for {} ({} visible, {} hidden in the UI)", active, expected,
+                DrugName(type), expected - hiddenExpected, hiddenExpected);
             std::string missing;
             if (potion) {
                 for (auto* fx : potion->effects) {

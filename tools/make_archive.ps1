@@ -68,6 +68,9 @@ try {
 } finally {
     $archive.Dispose()
 }
+. (Join-Path $PSScriptRoot "legal_docs.ps1")
+Add-LegalDocs -Zip $zip -Prefix "Data/Docs/Highrim" -Version $Version
+
 Write-Host ""
 Write-Host "Archive written to: $zip"
 $sha = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -119,10 +119,25 @@ jobs:
             Copy-Item "dist\Highrim_${{ steps.ver.outputs.version }}.zip" "dist\Highrim_${{ steps.ver.outputs.full }}.zip"
           }
 
+      # The GPL source archive: the repository at the tagged commit plus the pinned submodule sources. The script stops
+      # if a submodule is not checked out (the checkout above uses submodules: recursive). -OverlayWorkingTree adds the
+      # stamped version numbers, which are not committed at this point. It is attached to the GitHub release only;
+      # the Nexus upload below sends the mod zip alone.
+      - name: Source archive
+        id: source
+        shell: pwsh
+        run: |
+          git submodule status --recursive
+          powershell -File tools\make_source_archive.ps1 -Version ${{ steps.ver.outputs.full }} -OverlayWorkingTree
+          if ($LASTEXITCODE -ne 0) { throw "make_source_archive.ps1 failed" }
+          if (-not (Test-Path "dist\Highrim_${{ steps.ver.outputs.full }}_source.zip")) { throw "Source archive was not written under the expected name" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: Highrim_${{ steps.ver.outputs.full }}
-          path: dist/Highrim_${{ steps.ver.outputs.full }}.zip
+          path: |
+            dist/Highrim_${{ steps.ver.outputs.full }}.zip
+            dist/Highrim_${{ steps.ver.outputs.full }}_source.zip
 
       - name: GitHub release
         if: github.ref_type == 'tag'
@@ -132,7 +147,7 @@ jobs:
         run: |
           $extra = @()
           if ('${{ steps.ver.outputs.test }}' -eq 'true') { $extra += '--prerelease' }
-          gh release create "$env:GITHUB_REF_NAME" "dist\Highrim_${{ steps.ver.outputs.full }}.zip" --generate-notes --title "Highrim_${{ steps.ver.outputs.full }}" @extra
+          gh release create "$env:GITHUB_REF_NAME" "dist\Highrim_${{ steps.ver.outputs.full }}_source.zip" "dist\Highrim_${{ steps.ver.outputs.full }}.zip" --generate-notes --title "Highrim_${{ steps.ver.outputs.full }}" @extra
 
       - name: Upload to Nexus Mods
         if: github.ref_type == 'tag' && steps.ver.outputs.test != 'true' && env.NEXUS_KEY != '' && vars.NEXUS_FILE_ID != ''

@@ -5,6 +5,9 @@ name: Release
 # dist/Highrim_<version>.zip, creates a GitHub release with it, and (when configured)
 # uploads it to Nexus Mods as a new version of an existing file.
 #
+# A test tag such as v0.2.2-test1 builds the same zip and makes a GitHub PRE-RELEASE with it, but skips the Nexus upload
+# and the version bump commit, so every change can get a kept build without publishing it.
+#
 # One-time setup (see README, "Releasing"):
 #   secret   NEXUSMODS_API_KEY   your Nexus API key
 #   variable NEXUS_FILE_ID       ID of the file to add versions to (upload the first file by hand)
@@ -60,17 +63,22 @@ jobs:
         id: ver
         shell: pwsh
         run: |
+          $suffix = ''
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            if ($env:GITHUB_REF_NAME -notmatch '^v([0-9]+\.[0-9]+\.[0-9]+)$') {
-              throw "Tag $env:GITHUB_REF_NAME must look like v1.2.3"
+            if ($env:GITHUB_REF_NAME -notmatch '^v([0-9]+\.[0-9]+\.[0-9]+)(?:-([0-9A-Za-z.]+))?$') {
+              throw "Tag $env:GITHUB_REF_NAME must look like v1.2.3 (release) or v1.2.3-test1 (test build)"
             }
             $v = $Matches[1]
+            if ($Matches[2]) { $suffix = $Matches[2] }
           } else {
             $m = Select-String -Path CMakeLists.txt -Pattern 'project\(Highrim VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
             if (-not $m) { throw "Could not read the version from CMakeLists.txt" }
             $v = $m.Matches[0].Groups[1].Value
           }
+          $full = if ($suffix) { "$v-$suffix" } else { $v }
           "version=$v" >> $env:GITHUB_OUTPUT
+          "full=$full" >> $env:GITHUB_OUTPUT
+          "test=$(if ($suffix) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
 
       - name: Stamp the version into the sources
         if: github.ref_type == 'tag'
@@ -104,22 +112,30 @@ jobs:
       - name: Package
         id: package
         shell: pwsh
-        run: powershell -File tools\make_archive.ps1 -Version ${{ steps.ver.outputs.version }}
+        run: |
+          powershell -File tools\make_archive.ps1 -Version ${{ steps.ver.outputs.version }}
+          # A test tag (v1.2.3-test1) keeps its full name in the zip so builds sit side by side.
+          if ('${{ steps.ver.outputs.test }}' -eq 'true') {
+            Copy-Item "dist\Highrim_${{ steps.ver.outputs.version }}.zip" "dist\Highrim_${{ steps.ver.outputs.full }}.zip"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Highrim_${{ steps.ver.outputs.version }}
-          path: dist/Highrim_${{ steps.ver.outputs.version }}.zip
+          name: Highrim_${{ steps.ver.outputs.full }}
+          path: dist/Highrim_${{ steps.ver.outputs.full }}.zip
 
       - name: GitHub release
         if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$env:GITHUB_REF_NAME" "dist\Highrim_${{ steps.ver.outputs.version }}.zip" --generate-notes --title "Highrim_${{ steps.ver.outputs.version }}"
+        run: |
+          $extra = @()
+          if ('${{ steps.ver.outputs.test }}' -eq 'true') { $extra += '--prerelease' }
+          gh release create "$env:GITHUB_REF_NAME" "dist\Highrim_${{ steps.ver.outputs.full }}.zip" --generate-notes --title "Highrim_${{ steps.ver.outputs.full }}" @extra
 
       - name: Upload to Nexus Mods
-        if: github.ref_type == 'tag' && env.NEXUS_KEY != '' && vars.NEXUS_FILE_ID != ''
+        if: github.ref_type == 'tag' && steps.ver.outputs.test != 'true' && env.NEXUS_KEY != '' && vars.NEXUS_FILE_ID != ''
         uses: Nexus-Mods/upload-action@v1.0.0-beta.11
         with:
           api_key: ${{ secrets.NEXUSMODS_API_KEY }}
@@ -136,7 +152,7 @@ jobs:
       # Runs even when the Nexus step fails (for example a changelog error after the file was uploaded), as long as
       # the build and package succeeded.
       - name: Commit the version bump back to main
-        if: always() && github.ref_type == 'tag' && steps.package.conclusion == 'success'
+        if: always() && github.ref_type == 'tag' && steps.ver.outputs.test != 'true' && steps.package.conclusion == 'success'
         continue-on-error: true
         shell: pwsh
         run: |
